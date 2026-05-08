@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=20260508_122551_new_test
-#SBATCH --partition=andre01
+#SBATCH --partition=small-andre01
 #SBATCH --output=outputs/20260508_122551_new_test/%j_slurm.out
 #SBATCH --error=outputs/20260508_122551_new_test/%j_slurm.out
 #SBATCH --nodes=1
@@ -64,7 +64,10 @@ fi
 echo "start experiment..."
 apptainer exec --nv --bind "${LOCAL_SSD_DIR}" "${PROJECT_ROOT}/env/env.sif" bash -c "
     source ${PROJECT_ROOT}/.venv/bin/activate
-    python ${PROJECT_ROOT}/experiments/20260508_122551_new_test/experiment.py
+    python ./scripts/tggate/train/train_add.py \
+        --dir_result ${OUTPUT_DIR} \
+        --mouse_dataset \
+        --project_path ${PROJECT_ROOT} \
 "
 
 # 6. Sync back outputs to workspace (if local SSD was used)
