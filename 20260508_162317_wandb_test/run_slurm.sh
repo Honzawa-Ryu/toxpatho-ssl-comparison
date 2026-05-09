@@ -68,6 +68,8 @@ apptainer exec --nv --bind "${LOCAL_SSD_DIR}" "${PROJECT_ROOT}/env/env.sif" bash
         --dir_result ${OUTPUT_DIR} \
         --mouse_dataset \
         --project_path ${PROJECT_ROOT} \
+        --model_name ResNet50 \
+        --ssl_name swav \
 "
 
 # 6. Sync back outputs to workspace (if local SSD was used)
