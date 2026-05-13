@@ -1,8 +1,9 @@
 #!/bin/bash
-#SBATCH --job-name=20260508_122551_new_test
-#SBATCH --partition=large-andre01
-#SBATCH --output=outputs/20260508_122551_new_test/%j_slurm.out
-#SBATCH --error=outputs/20260508_122551_new_test/%j_slurm.out
+#SBATCH --job-name=20260509_231646_some_learn_cifar
+#SBATCH --partition=x-large-andre01
+#SBATCH --time=24:00:00
+#SBATCH --output=outputs/20260509_231646_some_learn_cifar/%j_slurm.out
+#SBATCH --error=outputs/20260509_231646_some_learn_cifar/%j_slurm.out
 #SBATCH --nodes=1
 #SBATCH --gpus=1
 #SBATCH --cpus-per-task=4
@@ -22,9 +23,9 @@ export DEPENDENT_EXPS=""
 
 # 1. Absolute paths injected dynamically at creation time
 export PROJECT_ROOT="/workspace/andre01/honzawa/wsi-ad"
-export EXP_NAME="20260508_122551_new_test"
+export EXP_NAME="20260509_231646_some_learn_cifar"
 ENV_FILE="${PROJECT_ROOT}/.env"
-WORKSPACE_OUTPUT_DIR="${PROJECT_ROOT}/outputs/20260508_122551_new_test"
+WORKSPACE_OUTPUT_DIR="${PROJECT_ROOT}/outputs/20260509_231646_some_learn_cifar"
 
 # 2. Load environment variables securely
 if [ -f "$ENV_FILE" ]; then
@@ -68,9 +69,11 @@ apptainer exec --nv --bind "${LOCAL_SSD_DIR}" "${PROJECT_ROOT}/env/env.sif" bash
         --dir_result ${OUTPUT_DIR} \
         --mouse_dataset \
         --project_path ${PROJECT_ROOT} \
-        --model_name ResNet50 \
-        --ssl_name byol \
-"
+        --model_name ViTB16 \
+        --ssl_name swav \
+        --patience 100 \
+        --batch_size 2 \
+    "
 
 # 6. Sync back outputs to workspace (if local SSD was used)
 if [ "$USE_LOCAL_SSD_OUTPUT" -eq 1 ]; then
