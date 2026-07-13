@@ -9,77 +9,70 @@
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=32G
 
+set -euo pipefail
+
 # ==========================================
-# Experiment Configuration
+# Paths
 # ==========================================
-# 0: Use workspace input / output
-# 1: Use local SSD for input staging / output (with final sync back to workspace)
-USE_LOCAL_SSD_INPUT=0
-USE_LOCAL_SSD_OUTPUT=0
-# dependent experiments outputs
-# ex: export DEPENDENT_EXPS="20260327_101530_pretrain, 20260328_120000_stage2"
-export DEPENDENT_EXPS=""
+SUBMIT_DIR="/workspace/andre01/honzawa/wsi-ad"
+PROJECT_NAME="wsi-ad"
+PROJECT_DIR="/scratch/honzawa/${PROJECT_NAME}_${SLURM_JOB_ID}"
+EXP_NAME="20260513_133414_tggate_learning"
+WORKSPACE_OUTPUT_DIR="${SUBMIT_DIR}/outputs/${EXP_NAME}"
+ENV_FILE="${SUBMIT_DIR}/.env"
+
 # ==========================================
+# Cleanup: 結果をworkspaceに戻す
+# ==========================================
+cleanup() {
+    echo "Syncing results back to workspace..."
+    mkdir -p "${WORKSPACE_OUTPUT_DIR}"
+    rsync -a "${PROJECT_DIR}/outputs/${EXP_NAME}/" "${WORKSPACE_OUTPUT_DIR}/"
+    echo "Cleaning up scratch..."
+    rm -rf "${PROJECT_DIR}"
+    echo "Done."
+}
+trap cleanup EXIT INT TERM
 
-# 1. Absolute paths injected dynamically at creation time
-export PROJECT_ROOT="/workspace/andre01/honzawa/wsi-ad"
-export EXP_NAME="20260513_133414_tggate_learning"
-ENV_FILE="${PROJECT_ROOT}/.env"
-WORKSPACE_OUTPUT_DIR="${PROJECT_ROOT}/outputs/20260513_133414_tggate_learning"
+# ==========================================
+# 1. scratchにプロジェクトを展開
+# ==========================================
+echo "Setting up project at ${PROJECT_DIR}..."
+mkdir -p "${PROJECT_DIR}"
 
-# 2. Load environment variables securely
-if [ -f "$ENV_FILE" ]; then
-    echo "Loading environment variables from: $ENV_FILE"
-    set -a
-    source "$ENV_FILE"
-    set +a
-else
-    echo "Error: Could not find .env file at $ENV_FILE"
-    exit 1
-fi
+# コード類を転送
+rsync -a \
+    "${SUBMIT_DIR}/scripts" \
+    "${SUBMIT_DIR}/src" \
+    "${SUBMIT_DIR}/env" \
+    "${PROJECT_DIR}/"
 
-# 3. Output Directory Setup based on the flag
-if [ "$USE_LOCAL_SSD_OUTPUT" -eq 1 ]; then
-    echo "Output mode: Local SSD -> workspace"
-    export OUTPUT_DIR="${LOCAL_SSD_DIR}/output"
-    mkdir -p "${OUTPUT_DIR}"
-else
-    echo "Output mode: Direct to workspace"
-    export OUTPUT_DIR="${WORKSPACE_OUTPUT_DIR}"
-fi
+# データをscratchに転送 (ここが今回の肝)
+echo "Staging data to scratch..."
+mkdir -p "${PROJECT_DIR}/data"
+rsync -a "${SUBMIT_DIR}/data/shards/" "${PROJECT_DIR}/data/shards/"
+echo "Data staging complete."
 
-# 4. Data Staging: Extract data from workspace directly to compute node's fast NVMe SSD
-# TODO: check the data path (/data/*...), there are no need to copy the whole data directory if only a subset is needed for the experiment
-if [ "$USE_LOCAL_SSD_INPUT" -eq 1 ]; then
-    echo "Input mode: Staging to ${LOCAL_SSD_DIR}"
-    mkdir -p "${LOCAL_SSD_DIR}/data"
-    echo "Staging dataset to ${LOCAL_SSD_DIR}..."
-    rsync -a "${PROJECT_ROOT}/data/" "${LOCAL_SSD_DIR}/data/"
-    export DATASET_DIR="${LOCAL_SSD_DIR}/data"
-else
-    echo "Input mode: Direct from workspace"
-    export DATASET_DIR="${PROJECT_ROOT}/data"
-fi
+# 出力先をscratch内に作成
+mkdir -p "${PROJECT_DIR}/outputs/${EXP_NAME}"
 
-# 5. Execute experiment inside Apptainer
-echo "start experiment..."
-apptainer exec --nv --bind "${LOCAL_SSD_DIR}" "${PROJECT_ROOT}/env/env.sif" bash -c "
-    source ${PROJECT_ROOT}/.venv/bin/activate
-    python ./scripts/train/train_tggate.py \
-        --dir_result ${OUTPUT_DIR} \
-        --project_path ${PROJECT_ROOT} \
-        --patience 100 \
-        --model_name ViTB16 \
-        --ssl_name  barlowtwins \
-        --batch_size 32 
+# ==========================================
+# 2. 学習実行 (scratch上で完結)
+# ==========================================
+echo "Loading env..."
+set -a; source "${ENV_FILE}"; set +a
+
+echo "Starting training..."
+apptainer exec --nv \
+    --bind "${PROJECT_DIR}" \
+    "${SUBMIT_DIR}/env/env.sif" bash -c "
+        cd ${PROJECT_DIR} && \
+        source ${SUBMIT_DIR}/.venv/bin/activate && \
+        python ${PROJECT_DIR}/scripts/train/train_tggate.py \
+            --project_path ${PROJECT_DIR} \
+            --dir_result outputs/${EXP_NAME} \
+            --patience 100 \
+            --model_name ViTB16 \
+            --ssl_name byol \
+            --batch_size 32
     "
-# 6. Sync back outputs to workspace (if local SSD was used)
-if [ "$USE_LOCAL_SSD_OUTPUT" -eq 1 ]; then
-    echo "Syncing experiment outputs back to workspace..."
-    rsync -a "${OUTPUT_DIR}/" "${WORKSPACE_OUTPUT_DIR}/"
-fi
-
-# 7. Cleanup
-echo "Cleaning up local SSD..."
-rm -rf "${LOCAL_SSD_DIR:?}"/*
-echo "Job finished."
