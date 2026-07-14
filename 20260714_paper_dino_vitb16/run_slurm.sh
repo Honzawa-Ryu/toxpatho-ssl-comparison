@@ -7,17 +7,20 @@
 #SBATCH --nodes=1
 #SBATCH --gpus=1
 #SBATCH --cpus-per-task=8
-#SBATCH --mem=64G
+#SBATCH --mem=48G
 
 # =====================================================================
-# DINO — paper-faithful (ViT-B/16), batch=512, epoch=100, no early stop
+# DINO — paper-faithful config (ViT-B/16, patch16)
 #   optimizer  : AdamW
-#   lr         : 0.0005 base -> linear-scaled x512/256 = 0.001
+#   base lr     : 0.0005 -> linear-scaled 0.0005*1024/256 = 0.002
+#   batch       : 1024
 #   weight_decay: cosine schedule 0.04 -> 0.4
-#   teacher temp / EMA / last-layer freeze : DINO class defaults
-#   warmup 10ep
-#   MULTICROP DEFERRED: paper is 2x224+8x96, but 96px local crops need ViT
-#     variable-resolution (pos-embed interpolation) -> running 2 global crops.
+#   multicrop   : 2x224 + 8x96   (p=16)
+#   warmup 10ep (lr); teacher temp 0.04->0.07 warmup; last-layer freeze 1ep (in DINO class)
+# NEW ARGS REQUIRED: --weight_decay_end (wd cosine end), --n_local_crops, --local_crop_size
+#   plus wd-cosine-schedule in the train loop (wd currently fixed) and n_local_crops CLI wiring
+#   into sslutils.DINO (default 0 -> 8 enables 2x224+8x96 multicrop).
+# NOTE: bs1024 will OOM on one 48GB GPU -> revisit (grad-accum / DDP).
 # =====================================================================
 export PROJECT_ROOT="/workspace/andre01/honzawa/wsi-ad"
 export EXP_NAME="20260714_paper_dino_vitb16"
@@ -33,9 +36,11 @@ apptainer exec --nv --bind "${LOCAL_SSD_DIR}" "${PROJECT_ROOT}/env/env.sif" bash
     python ${PROJECT_ROOT}/scripts/train/train_tggate.py \
         --note paper_dino_vitb16 --project_path ${PROJECT_ROOT} --dir_result ${OUTPUT_DIR} \
         --model_name ViTB16 --ssl_name dino \
-        --optimizer adamw --lr 0.001 \
+        --optimizer adamw \
+        --lr 0.002 \
         --weight_decay 0.04 --weight_decay_end 0.4 \
-        --batch_size 512 \
+        --batch_size 1024 \
+        --n_global_crops 2 --n_local_crops 8 --local_crop_size 96 \
         --num_epoch 100 --warmup_t 10 --lr_min 1e-6 \
         --rank_monitor_interval 5
 "

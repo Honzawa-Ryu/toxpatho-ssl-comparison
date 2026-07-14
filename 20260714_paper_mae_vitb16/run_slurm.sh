@@ -7,14 +7,20 @@
 #SBATCH --nodes=1
 #SBATCH --gpus=1
 #SBATCH --cpus-per-task=8
-#SBATCH --mem=64G
+#SBATCH --mem=48G
 
 # =====================================================================
-# MAE — paper-faithful (He et al. 2022, ViT-B/16), batch=512, epoch=100, no early stop
+# MAE — paper-faithful config (He et al. 2022, ViT-B/16)
 #   optimizer  : AdamW, betas (0.9, 0.95)
-#   lr         : 1.5e-4 base -> linear-scaled x512/256 = 3e-4
-#   weight_decay: 0.05 ; warmup 40ep ; mask 0.75 ; normalized-pixel loss
-#   augmentation: crop + flip only (no color/blur/solarize)
+#   base lr     : 1.5e-4 -> linear-scaled 1.5e-4*4096/256 = 2.4e-3
+#   batch       : 4096
+#   weight_decay: 0.05
+#   warmup      : 40 epochs, cosine decay
+#   mask ratio  : 0.75 ; normalized-pixel loss ; aug = crop + flip only (no color)
+# FULLY REPRESENTABLE with current args (beta2, warmup_t, aug-off all supported).
+# NOTE: bs4096 will OOM on one 48GB GPU (bs256~14GB) -> revisit (grad-accum / DDP).
+#   The current running ViT-B run (20260710_000001) is the near-paper reference but used
+#   bs256 / beta2 0.999 / warmup 10 -> this shell is the strict version.
 # =====================================================================
 export PROJECT_ROOT="/workspace/andre01/honzawa/wsi-ad"
 export EXP_NAME="20260714_paper_mae_vitb16"
@@ -30,8 +36,10 @@ apptainer exec --nv --bind "${LOCAL_SSD_DIR}" "${PROJECT_ROOT}/env/env.sif" bash
     python ${PROJECT_ROOT}/scripts/train/train_tggate.py \
         --note paper_mae_vitb16 --project_path ${PROJECT_ROOT} --dir_result ${OUTPUT_DIR} \
         --model_name ViTB16 --ssl_name mae \
-        --optimizer adamw --beta2 0.95 --lr 3e-4 --weight_decay 0.05 \
-        --batch_size 512 \
+        --optimizer adamw --beta2 0.95 \
+        --lr 2.4e-3 \
+        --weight_decay 0.05 \
+        --batch_size 4096 \
         --color_plob 0.0 --blur_plob 0.0 --solar_plob 0.0 \
         --num_epoch 100 --warmup_t 40 --lr_min 0.0 \
         --rank_monitor_interval 5
