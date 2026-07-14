@@ -1,25 +1,25 @@
 #!/bin/bash
 #SBATCH --job-name=20260711_000002_tggate_vitb16_barlowtwins
-#SBATCH --partition=x-large-andre01
+#SBATCH --partition=x-large-david01
 #SBATCH --time=72:00:00
 #SBATCH --output=outputs/20260711_000002_tggate_vitb16_barlowtwins/%j_slurm.out
 #SBATCH --error=outputs/20260711_000002_tggate_vitb16_barlowtwins/%j_slurm.out
 #SBATCH --nodes=1
 #SBATCH --gpus=1
-#SBATCH --cpus-per-task=8
-#SBATCH --mem=48G
+#SBATCH --cpus-per-task=40
+#SBATCH --mem=110G
 
-# Backbone: ViT-B/16 | SSL: Barlow Twins | Batch: 128
-# Barlow Twins on a ViT-B/16 backbone -- backbone-matched control for MAE(ViT) so
-# that method vs backbone can be disentangled (MAE=ViT color-driven finding).
-# Stable-from-scratch ViT settings (lr 1.5e-4, weight_decay 0.05, warmup 15) since
-# the earlier ViT-BT run (20260630_000002) diverged to NaN under old lr=1e-3.
-# 2 views (color/blur aug), batch 128. Early stopping (patience 15).
-USE_LOCAL_SSD_INPUT=0
+    # Backbone: ViT-B/16 | SSL: Barlow Twins | Batch: 128
+    # Barlow Twins on a ViT-B/16 backbone -- backbone-matched control for MAE(ViT) so
+    # that method vs backbone can be disentangled (MAE=ViT color-driven finding).
+    # Stable-from-scratch ViT settings (lr 1.5e-4, weight_decay 0.05, warmup 15) since
+    # the earlier ViT-BT run (20260630_000002) diverged to NaN under old lr=1e-3.
+    # 2 views (color/blur aug), batch 128. Early stopping (patience 15).
+USE_LOCAL_SSD_INPUT=1
 USE_LOCAL_SSD_OUTPUT=0
 export DEPENDENT_EXPS=""
 
-export PROJECT_ROOT="/workspace/andre01/honzawa/wsi-ad"
+export PROJECT_ROOT="/workspace/david01/honzawa/wsi-ad"
 export EXP_NAME="20260711_000002_tggate_vitb16_barlowtwins"
 ENV_FILE="${PROJECT_ROOT}/.env"
 WORKSPACE_OUTPUT_DIR="${PROJECT_ROOT}/outputs/${EXP_NAME}"
