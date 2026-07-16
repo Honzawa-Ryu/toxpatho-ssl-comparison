@@ -7,20 +7,17 @@
 #SBATCH --nodes=1
 #SBATCH --gpus=1
 #SBATCH --cpus-per-task=8
-#SBATCH --mem=48G
+#SBATCH --mem=44G
 
 # =====================================================================
-# DINO — paper-faithful config (ViT-B/16, patch16)
+# DINO — paper-faithful (ViT-B/16), batch=512, epoch=100, no early stop
 #   optimizer  : AdamW
-#   base lr     : 0.0005 -> linear-scaled 0.0005*1024/256 = 0.002
-#   batch       : 1024
+#   lr         : 0.0005 base -> linear-scaled x512/256 = 0.001
 #   weight_decay: cosine schedule 0.04 -> 0.4
-#   multicrop   : 2x224 + 8x96   (p=16)
-#   warmup 10ep (lr); teacher temp 0.04->0.07 warmup; last-layer freeze 1ep (in DINO class)
-# NEW ARGS REQUIRED: --weight_decay_end (wd cosine end), --n_local_crops, --local_crop_size
-#   plus wd-cosine-schedule in the train loop (wd currently fixed) and n_local_crops CLI wiring
-#   into sslutils.DINO (default 0 -> 8 enables 2x224+8x96 multicrop).
-# NOTE: bs1024 will OOM on one 48GB GPU -> revisit (grad-accum / DDP).
+#   teacher temp / EMA / last-layer freeze : DINO class defaults
+#   warmup 10ep
+#   multicrop  : 2x224 + 8x96 (paper); the DINO timm backbone already uses
+#     dynamic_img_size, and _forward_views groups crops by resolution.
 # =====================================================================
 export PROJECT_ROOT="/workspace/andre01/honzawa/wsi-ad"
 export EXP_NAME="20260714_paper_dino_vitb16"
@@ -31,17 +28,16 @@ export DATASET_DIR="${PROJECT_ROOT}/data"
 
 apptainer exec --nv --bind "${LOCAL_SSD_DIR}" "${PROJECT_ROOT}/env/env.sif" bash -c "
     source ${PROJECT_ROOT}/.venv/bin/activate
-    export PYTHONPATH=\"${PROJECT_ROOT}:\${PYTHONPATH:-}\"; export WANDB_MODE=offline
+    export PYTHONPATH=\"${PROJECT_ROOT}:\${PYTHONPATH:-}\"; export WANDB_MODE=offline; export OMP_NUM_THREADS=1
     cd ${PROJECT_ROOT}
     python ${PROJECT_ROOT}/scripts/train/train_tggate.py \
         --note paper_dino_vitb16 --project_path ${PROJECT_ROOT} --dir_result ${OUTPUT_DIR} \
         --model_name ViTB16 --ssl_name dino \
-        --optimizer adamw \
-        --lr 0.002 \
+        --optimizer adamw --lr 2.5e-4 \
         --weight_decay 0.04 --weight_decay_end 0.4 \
-        --batch_size 1024 \
+        --batch_size 128 \
         --n_global_crops 2 --n_local_crops 8 --local_crop_size 96 \
         --num_epoch 100 --warmup_t 10 --lr_min 1e-6 \
-        --rank_monitor_interval 5
+        --rank_monitor_interval 5 --save_interval 5 --resume
 "
 echo "Job finished."

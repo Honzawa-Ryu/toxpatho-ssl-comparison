@@ -8,23 +8,18 @@
 #SBATCH --gpus=1
 
 #SBATCH --cpus-per-task=8
-#SBATCH --mem=48G
+#SBATCH --mem=44G
 
 # =====================================================================
-# Barlow Twins — paper-faithful config (backbone unified to ViT-B/16)
+# Barlow Twins — paper-faithful (ViT-B/16), batch=512, epoch=100, no early stop
 #   optimizer  : LARS
-#   lr (weights): 0.2   -> linear-scaled 0.2*2048/256   = 1.6
-#   lr (biases) : 0.0048-> linear-scaled 0.0048*2048/256 = 0.0384
-#   batch       : 2048
-#   projector   : 3 x 8192  (BN on first two layers)
-#   lambda (off-diag): 5e-3
-#   weight_decay: 1.5e-6
-#   biases & BN params: excluded from LARS adaptation AND from weight decay
+#   lr (weights): 0.2  base -> x512/256 = 0.4
+#   lr (biases) : 0.0048 base -> x512/256 = 0.0096
+#   projector   : 3 x 8192 ; lambda (off-diag) : 5e-3 (class default)
+#   weight_decay: 1.5e-6 ; bias & BN excluded from LARS adaptation AND weight decay
 #   warmup 10ep, cosine decay
-# NEW ARGS REQUIRED: --optimizer lars, --lr_bias, --proj_dim 8192, --bt_lambda,
-#   --lars_exclude_bias_bn ; plus LARS optimizer + param-group builder in train_tggate.py
-#   and projection_dim/pred_dim=8192 wiring in BarlowTwins.prepare_model.
-# NOTE: bs2048 will OOM on one 48GB GPU -> revisit (grad-accum / DDP).
+#   NOTE: BT loss is batch-coupled (cross-correlation over the batch); bs512 is a
+#     faithful *small-batch* run (not gradient-accumulation-equivalent to bs2048).
 # =====================================================================
 export PROJECT_ROOT="/workspace/andre01/honzawa/wsi-ad"
 export EXP_NAME="20260714_paper_barlowtwins_vitb16"
@@ -35,17 +30,16 @@ export DATASET_DIR="${PROJECT_ROOT}/data"
 
 apptainer exec --nv --bind "${LOCAL_SSD_DIR}" "${PROJECT_ROOT}/env/env.sif" bash -c "
     source ${PROJECT_ROOT}/.venv/bin/activate
-    export PYTHONPATH=\"${PROJECT_ROOT}:\${PYTHONPATH:-}\"; export WANDB_MODE=offline
+    export PYTHONPATH=\"${PROJECT_ROOT}:\${PYTHONPATH:-}\"; export WANDB_MODE=offline; export OMP_NUM_THREADS=1
     cd ${PROJECT_ROOT}
     python ${PROJECT_ROOT}/scripts/train/train_tggate.py \
         --note paper_barlowtwins_vitb16 --project_path ${PROJECT_ROOT} --dir_result ${OUTPUT_DIR} \
         --model_name ViTB16 --ssl_name barlowtwins \
-        --optimizer lars \
-        --lr 1.6 --lr_bias 0.0384 \
-        --weight_decay 1.5e-6 --lars_exclude_bias_bn \
-        --batch_size 2048 \
+        --optimizer lars --lr 0.2 --lr_bias 0.0048 --lars_exclude_bias_bn \
+        --weight_decay 1.5e-6 \
+        --batch_size 256 \
         --proj_dim 8192 --bt_lambda 5e-3 \
         --num_epoch 100 --warmup_t 10 --lr_min 0.0 \
-        --rank_monitor_interval 5
+        --rank_monitor_interval 5 --save_interval 5 --resume
 "
 echo "Job finished."

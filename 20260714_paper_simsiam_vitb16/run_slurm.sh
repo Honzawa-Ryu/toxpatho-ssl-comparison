@@ -6,21 +6,16 @@
 #SBATCH --error=outputs/20260714_paper_simsiam_vitb16/%j_slurm.out
 #SBATCH --nodes=1
 #SBATCH --gpus=1
-#SBATCH --cpus-per-task=8
-#SBATCH --mem=48G
+#SBATCH --cpus-per-task=6
+#SBATCH --mem=32G
 
 # =====================================================================
-# SimSiam — paper-faithful config (Chen & He 2021, ViT-B/16)
+# SimSiam — paper-faithful (Chen & He 2021, ViT-B/16), batch=512, epoch=100, no early stop
 #   optimizer  : SGD, momentum 0.9
-#   base lr     : 0.05 -> linear-scaled 0.05*512/256 = 0.1
-#   batch       : 512
+#   lr         : 0.05 base -> linear-scaled x512/256 = 0.1
 #   weight_decay: 1e-4
-#   epochs      : 100, warmup 10ep, cosine decay
-#   predictor   : FIXED lr (not decayed)  <-- key anti-collapse component (fix-pred-lr)
-#   projector 3-layer (BN), pred_dim 512, dim 2048
-# NEW ARG REQUIRED: --fix_pred_lr (predictor as separate param-group with constant lr,
-#   excluded from the cosine scheduler). Without it SimSiam is prone to the collapse we saw.
-# NOTE: bs512 (~28GB) likely FITS on one 48GB GPU -> this one is the most launchable.
+#   predictor  : FIXED lr (not decayed by the scheduler)  <- key anti-collapse knob
+#   warmup 10ep, cosine decay ; projector 3-layer (BN), pred_dim 512, dim 2048
 # =====================================================================
 export PROJECT_ROOT="/workspace/andre01/honzawa/wsi-ad"
 export EXP_NAME="20260714_paper_simsiam_vitb16"
@@ -31,16 +26,14 @@ export DATASET_DIR="${PROJECT_ROOT}/data"
 
 apptainer exec --nv --bind "${LOCAL_SSD_DIR}" "${PROJECT_ROOT}/env/env.sif" bash -c "
     source ${PROJECT_ROOT}/.venv/bin/activate
-    export PYTHONPATH=\"${PROJECT_ROOT}:\${PYTHONPATH:-}\"; export WANDB_MODE=offline
+    export PYTHONPATH=\"${PROJECT_ROOT}:\${PYTHONPATH:-}\"; export WANDB_MODE=offline; export OMP_NUM_THREADS=1
     cd ${PROJECT_ROOT}
     python ${PROJECT_ROOT}/scripts/train/train_tggate.py \
         --note paper_simsiam_vitb16 --project_path ${PROJECT_ROOT} --dir_result ${OUTPUT_DIR} \
         --model_name ViTB16 --ssl_name simsiam \
-        --optimizer sgd \
-        --lr 0.1 --fix_pred_lr \
-        --weight_decay 1e-4 \
-        --batch_size 512 \
+        --optimizer sgd --lr 0.05 --fix_pred_lr --weight_decay 1e-4 \
+        --batch_size 256 \
         --num_epoch 100 --warmup_t 10 --lr_min 0.0 \
-        --rank_monitor_interval 5
+        --rank_monitor_interval 5 --save_interval 5 --resume
 "
 echo "Job finished."
