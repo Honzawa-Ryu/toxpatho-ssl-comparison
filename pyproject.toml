@@ -1,0 +1,77 @@
+[project]
+name = "template-daily-research-experiments"
+version = "0.1.0"
+description = "Knowledge graph construction and retrieval with PubMed"
+readme = "README.md"
+requires-python = "==3.12.*"
+dependencies = [
+    "jupyterlab",
+    "ipython",
+    "matplotlib",
+    "notebook",
+    "numpy",
+    "optuna",
+    "pandas",
+    "dask",
+    "fastparquet",
+    "lightgbm",
+    "plotly",
+    "polars",
+    "elasticsearch>=8.0.0,<9.0.0",
+    "pyarrow",
+    "tqdm",
+    "requests",
+    "scikit-learn",
+    "scipy",
+    "seaborn",
+
+    "slackweb",
+    "wandb",
+    "xgboost",
+    "torch==2.11.0+cu130",
+    "torchvision",
+    "torchaudio",
+    "transformers",
+    "datasets",
+    "lxml",
+    "python-dotenv",
+    "cython",
+    "spacy",
+    "fast-langdetect",
+    "scispacy",
+    "duckdb",
+    "pynvml",
+    "psutil",
+    "accelerate",
+    "trl",
+    "peft",
+    "evaluate",
+    "bitsandbytes",
+    "safetensors",
+    "tokenizers",
+    "huggingface-hub",
+    "sentencepiece",
+    "vllm>=0.22.0",
+    "matplotlib-venn>=1.1.2",
+]
+
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+# lib をパッケージとして認識させる設定
+[tool.hatch.build.targets.wheel]
+packages = ["lib"]
+
+# pytorch index url
+[[tool.uv.index]]
+name = "pytorch-cu130"
+url = "https://download.pytorch.org/whl/cu130"
+explicit = true
+
+# strict pytorch to be installed from "pytorch-cu130"
+[tool.uv.sources]
+torch = { index = "pytorch-cu130" }
+torchvision = { index = "pytorch-cu130" }
+torchaudio = { index = "pytorch-cu130" }
