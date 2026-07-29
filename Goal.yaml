@@ -85,7 +85,7 @@ outputs:
   required:
     - Goal.yaml                         # 本タスク定義ファイル（方針の真実源）
     - PROJECT_STATUS.md                 # 進捗レポート（毎作業後に更新）
-    - src/sslmodel/models/mae.py        # MAE 実装（ViT ベース）
-    - src/sslmodel/models/dino.py       # DINO 実装（ViT ベース）
+    - lib/sslmodel/models/mae.py        # MAE 実装（ViT ベース）
+    - lib/sslmodel/models/dino.py       # DINO 実装（ViT ベース）
     - 表現比較スクリプト                # CKA / クラスタリング(ARI) / プロトタイプ抽出・可視化
     - representation_comparison_report  # 4手法の表現比較の結果・考察レポート
