@@ -1,0 +1,9 @@
+# ============================================================
+# 表現比較用の埋め込み抽出（4手法 + foundation, methods.yaml）
+# ============================================================
+
+analysis:
+  methods_config: "scripts/analysis/methods.yaml"
+  data_subdir: "shards"
+  n_patches: 2000
+  batch_size: 256

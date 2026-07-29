@@ -1,0 +1,6 @@
+exp_id: 0001
+exp_name: 0001_20260729_repr_extract_embeddings
+created_date: 20260729
+git_commit: 3881315447b3be1779f8eea9af7a6adbd48759c6
+partition: x-large-andre01
+migrated_from: scripts/analysis/run_analysis_slurm.sh
