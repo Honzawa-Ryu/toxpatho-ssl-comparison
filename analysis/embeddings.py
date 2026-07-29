@@ -13,8 +13,11 @@ import json
 import numpy as np
 import torch
 import torchvision.transforms as transforms
+import yaml
 from PIL import Image
 import webdataset as wds
+
+import lib.model.zoo as zoo
 
 THUMB = 96  # thumbnail size (px) stored for prototype montages
 
@@ -84,3 +87,62 @@ def embed(model, x, device, batch_size=256):
         f = torch.flatten(f, start_dim=1).float().cpu()
         outs.append(f)
     return torch.cat(outs).numpy()
+
+
+def run(methods_config, data_dir="data/shards", n_patches=2000, batch_size=256,
+        output_dir="outputs/representation_analysis", grayscale=False, filter_wsi=""):
+    """全手法で共通のパッチ集合を埋め込み、emb_{name}.npy として保存する。
+
+    旧 `scripts/analysis/extract_embeddings.py` の main() 本体をそのまま関数化した
+    もの（REFACTOR_PLAN.md §5-0「研究の実処理は lib/」/ Phase 4）。
+    scripts 側は CLI シムとして残してある。
+
+    checkpoint が見つからない手法はスキップするので、学習が全部終わる前でも回せる。
+    """
+    os.makedirs(output_dir, exist_ok=True)
+    with open(methods_config) as f:
+        cfg = yaml.safe_load(f)
+    shard_idx = (cfg.get("patches") or {}).get("shards")
+
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    print(f"[device] {device}")
+
+    x, thumbs, meta = load_fixed_patches(
+        data_dir, shard_idx, n_patches,
+        grayscale=grayscale, filter_wsi=filter_wsi)
+    np.save(os.path.join(output_dir, "patches_thumbs.npy"), thumbs)
+    with open(os.path.join(output_dir, "patches_meta.json"), "w") as f:
+        json.dump(meta, f, ensure_ascii=False)
+
+    done = {}
+    for m in cfg["methods"]:
+        name = m["name"]
+        ssl_name = m["ssl_name"]
+        is_foundation = ssl_name == "foundation"
+        if is_foundation:
+            # Pretrained external foundation model (e.g. UNI): no in-project
+            # checkpoint; weights come from timm/HF cache, so no model_path to check.
+            print(f"[embed] {name}  ({m['model_name']} / foundation)")
+            model = zoo.prepare_foundation_eval(
+                model_name=m["model_name"], DEVICE=device)
+        else:
+            mp = m["model_path"]
+            if not os.path.exists(mp):
+                print(f"[skip] {name}: checkpoint not found ({mp})")
+                continue
+            print(f"[embed] {name}  ({m['model_name']} / {ssl_name})")
+            model = zoo.prepare_model_eval(
+                model_name=m["model_name"], ssl_name=ssl_name,
+                model_path=mp, pretrained=False, DEVICE=device)
+        emb = embed(model, x, device, batch_size=batch_size)
+        np.save(os.path.join(output_dir, f"emb_{name}.npy"), emb)
+        print(f"        -> emb_{name}.npy  shape={emb.shape}")
+        done[name] = list(emb.shape)
+        del model
+        if device.type == "cuda":
+            torch.cuda.empty_cache()
+
+    with open(os.path.join(output_dir, "extract_summary.json"), "w") as f:
+        json.dump({"n_patches": int(x.size(0)), "embeddings": done}, f, indent=2)
+    print(f"[done] embeddings for {list(done)} in {output_dir}")
+    return done
