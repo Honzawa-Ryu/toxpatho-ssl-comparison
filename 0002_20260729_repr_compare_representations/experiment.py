@@ -82,15 +82,15 @@ def main() -> None:
 def _stage_inputs(input_dir: Path, run_dir: Path) -> None:
     import shutil
 
-    for src in sorted(input_dir.iterdir()):
-        if src.is_file() and (
-            src.name.startswith("emb_")
-            or src.name.startswith("patches_")
-            or src.name == "extract_summary.json"
+    for item in sorted(input_dir.iterdir()):
+        if item.is_file() and (
+            item.name.startswith("emb_")
+            or item.name.startswith("patches_")
+            or item.name == "extract_summary.json"
         ):
-            dst = run_dir / src.name
+            dst = run_dir / item.name
             if not dst.exists():
-                shutil.copy2(src, dst)
+                shutil.copy2(item, dst)
 
 
 if __name__ == "__main__":
