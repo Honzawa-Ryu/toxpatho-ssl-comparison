@@ -48,8 +48,10 @@ end-to-end検証済み（CKAが旧simsiamの崩壊を0.04として正しく検�
 - `scripts/analysis/compare_representations.py`: (a) CKA行列、(b) k-means + ARI/NMI(手法間)、
   (c) クラスタ別プロトタイプパッチのモンタージュ、(d) t-SNE(PCA-50前処理)、
   (e) **任意**: `--label_csv key,label` を渡すと意味ARI/NMIとラベル重心間距離(A/B/C近接)を出力。
-- `scripts/analysis/methods.yaml`: 4手法のチェックポイントパス。`run_analysis_slurm.sh` で extract→compare を一括実行。
-- 実行: 全学習完了後に `sbatch scripts/analysis/run_analysis_slurm.sh`（欠損分はスキップされるので順次でも可）。
+- `scripts/analysis/methods.yaml`: 4手法のチェックポイントパス。
+- 実行: 全学習完了後に `runx 1`（extract）→ `runx 2`（compare）。欠損分はスキップされるので順次でも可。
+  Phase 4 で `run_analysis_slurm.sh` を廃し、1フェーズ = 1実験ディレクトリに載せ替えた
+  （REFACTOR_PLAN.md §7-6）。paper 版は `0003`〜`0006` の4実験に分割済み。
 - ラベルは現状リポジトリに無い（findings CSVは分類名一覧のみ）。意味比較したい場合は
   Open TG-GATEsのスライド単位アノテーション(WSI→finding/dose)か外部ラベル付きH&Eパッチが別途必要。
 

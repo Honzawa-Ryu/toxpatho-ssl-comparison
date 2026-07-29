@@ -36,7 +36,10 @@
 - [x] CKA（線形/RBF, 次元非依存）、k-means ARI/NMI、プロトタイプパッチ、t-SNE
 - [x] バッチ/色影響の定量: η²_slide・η²_color・within-slide cohesion（`batch_color_influence.py`）
 - [x] ablation: 白黒 `--grayscale` / 単一スライド `--filter_wsi`
-- [ ] 本命4手法完了後に `sbatch scripts/analysis/run_analysis_slurm.sh` で本比較
+- [ ] 本命4手法完了後に `runx 1` → `runx 2`（表現比較の extract → compare）で本比較
+      ※ `scripts/analysis/run_analysis_slurm.sh` は Phase 4 で
+        `experiments/0001_.._repr_extract_embeddings` / `0002_.._repr_compare_representations`
+        に載せ替えて削除した（REFACTOR_PLAN.md §7-6）
 - [ ] **バッチ統制版を標準パネル化**: within-slide CKA/ARI、slide-balancedサンプリングを既定に
 - [ ] **[要修正/方法論] ABMIL評価のval集合リーク** ([scripts/evaluate/abmil_eval.py](scripts/evaluate/abmil_eval.py))
       `train_abmil`が各foldのval AUCでbest-epochを選び、`eval_abmil`が**同じval**で最終AUCを報告
