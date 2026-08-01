@@ -1,0 +1,12 @@
+diff --git a/templates/run_slurm.sh b/templates/run_slurm.sh
+index 230770a..ff56635 100644
+--- a/templates/run_slurm.sh
++++ b/templates/run_slurm.sh
+@@ -6,6 +6,7 @@
+ #SBATCH --nodes=1
+ #SBATCH --gpus=1
+ #SBATCH --cpus-per-task=4
++#SBATCH --mem=16G
+ 
+ # ==========================================
+ # Experiment Configuration

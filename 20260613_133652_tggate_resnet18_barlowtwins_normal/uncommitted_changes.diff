@@ -1,0 +1,409 @@
+diff --git a/.gitignore b/.gitignore
+index 14da985..d6f2c90 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -217,4 +217,6 @@ outputs/
+ # logs
+ logs/
+ *.out
+-share/
+\ No newline at end of file
++share/
++
++wandb/
+\ No newline at end of file
+diff --git a/experiments/20260519_135532_tggate_test/run_slurm.sh b/experiments/20260519_135532_tggate_test/run_slurm.sh
+index 4b17bd1..1b26247 100644
+--- a/experiments/20260519_135532_tggate_test/run_slurm.sh
++++ b/experiments/20260519_135532_tggate_test/run_slurm.sh
+@@ -9,77 +9,70 @@
+ #SBATCH --cpus-per-task=8
+ #SBATCH --mem=32G
+ 
++set -euo pipefail
++
++# ==========================================
++# Paths
+ # ==========================================
+-# Experiment Configuration
++SUBMIT_DIR="/workspace/andre01/honzawa/wsi-ad"
++PROJECT_NAME="wsi-ad"
++PROJECT_DIR="/scratch/honzawa/${PROJECT_NAME}_${SLURM_JOB_ID}"
++EXP_NAME="20260513_133414_tggate_learning"
++WORKSPACE_OUTPUT_DIR="${SUBMIT_DIR}/outputs/${EXP_NAME}"
++ENV_FILE="${SUBMIT_DIR}/.env"
++
+ # ==========================================
+-# 0: Use workspace input / output
+-# 1: Use local SSD for input staging / output (with final sync back to workspace)
+-USE_LOCAL_SSD_INPUT=0
+-USE_LOCAL_SSD_OUTPUT=0
+-# dependent experiments outputs
+-# ex: export DEPENDENT_EXPS="20260327_101530_pretrain, 20260328_120000_stage2"
+-export DEPENDENT_EXPS=""
++# Cleanup: 結果をworkspaceに戻す
+ # ==========================================
++cleanup() {
++    echo "Syncing results back to workspace..."
++    mkdir -p "${WORKSPACE_OUTPUT_DIR}"
++    rsync -a "${PROJECT_DIR}/outputs/${EXP_NAME}/" "${WORKSPACE_OUTPUT_DIR}/"
++    echo "Cleaning up scratch..."
++    rm -rf "${PROJECT_DIR}"
++    echo "Done."
++}
++trap cleanup EXIT INT TERM
+ 
+-# 1. Absolute paths injected dynamically at creation time
+-export PROJECT_ROOT="/workspace/andre01/honzawa/wsi-ad"
+-export EXP_NAME="20260513_133414_tggate_learning"
+-ENV_FILE="${PROJECT_ROOT}/.env"
+-WORKSPACE_OUTPUT_DIR="${PROJECT_ROOT}/outputs/20260513_133414_tggate_learning"
++# ==========================================
++# 1. scratchにプロジェクトを展開
++# ==========================================
++echo "Setting up project at ${PROJECT_DIR}..."
++mkdir -p "${PROJECT_DIR}"
+ 
+-# 2. Load environment variables securely
+-if [ -f "$ENV_FILE" ]; then
+-    echo "Loading environment variables from: $ENV_FILE"
+-    set -a
+-    source "$ENV_FILE"
+-    set +a
+-else
+-    echo "Error: Could not find .env file at $ENV_FILE"
+-    exit 1
+-fi
++# コード類を転送
++rsync -a \
++    "${SUBMIT_DIR}/scripts" \
++    "${SUBMIT_DIR}/src" \
++    "${SUBMIT_DIR}/env" \
++    "${PROJECT_DIR}/"
+ 
+-# 3. Output Directory Setup based on the flag
+-if [ "$USE_LOCAL_SSD_OUTPUT" -eq 1 ]; then
+-    echo "Output mode: Local SSD -> workspace"
+-    export OUTPUT_DIR="${LOCAL_SSD_DIR}/output"
+-    mkdir -p "${OUTPUT_DIR}"
+-else
+-    echo "Output mode: Direct to workspace"
+-    export OUTPUT_DIR="${WORKSPACE_OUTPUT_DIR}"
+-fi
++# データをscratchに転送 (ここが今回の肝)
++echo "Staging data to scratch..."
++mkdir -p "${PROJECT_DIR}/data"
++rsync -a "${SUBMIT_DIR}/data/shards/" "${PROJECT_DIR}/data/shards/"
++echo "Data staging complete."
+ 
+-# 4. Data Staging: Extract data from workspace directly to compute node's fast NVMe SSD
+-# TODO: check the data path (/data/*...), there are no need to copy the whole data directory if only a subset is needed for the experiment
+-if [ "$USE_LOCAL_SSD_INPUT" -eq 1 ]; then
+-    echo "Input mode: Staging to ${LOCAL_SSD_DIR}"
+-    mkdir -p "${LOCAL_SSD_DIR}/data"
+-    echo "Staging dataset to ${LOCAL_SSD_DIR}..."
+-    rsync -a "${PROJECT_ROOT}/data/" "${LOCAL_SSD_DIR}/data/"
+-    export DATASET_DIR="${LOCAL_SSD_DIR}/data"
+-else
+-    echo "Input mode: Direct from workspace"
+-    export DATASET_DIR="${PROJECT_ROOT}/data"
+-fi
++# 出力先をscratch内に作成
++mkdir -p "${PROJECT_DIR}/outputs/${EXP_NAME}"
+ 
+-# 5. Execute experiment inside Apptainer
+-echo "start experiment..."
+-apptainer exec --nv --bind "${LOCAL_SSD_DIR}" "${PROJECT_ROOT}/env/env.sif" bash -c "
+-    source ${PROJECT_ROOT}/.venv/bin/activate
+-    python ./scripts/train/train_tggate.py \
+-        --dir_result ${OUTPUT_DIR} \
+-        --project_path ${PROJECT_ROOT} \
+-        --patience 100 \
+-        --model_name ViTB16 \
+-        --ssl_name  barlowtwins \
+-        --batch_size 32 
+-    "
+-# 6. Sync back outputs to workspace (if local SSD was used)
+-if [ "$USE_LOCAL_SSD_OUTPUT" -eq 1 ]; then
+-    echo "Syncing experiment outputs back to workspace..."
+-    rsync -a "${OUTPUT_DIR}/" "${WORKSPACE_OUTPUT_DIR}/"
+-fi
++# ==========================================
++# 2. 学習実行 (scratch上で完結)
++# ==========================================
++echo "Loading env..."
++set -a; source "${ENV_FILE}"; set +a
+ 
+-# 7. Cleanup
+-echo "Cleaning up local SSD..."
+-rm -rf "${LOCAL_SSD_DIR:?}"/*
+-echo "Job finished."
+\ No newline at end of file
++echo "Starting training..."
++apptainer exec --nv \
++    --bind "${PROJECT_DIR}" \
++    "${SUBMIT_DIR}/env/env.sif" bash -c "
++        cd ${PROJECT_DIR} && \
++        source ${SUBMIT_DIR}/.venv/bin/activate && \
++        python ${PROJECT_DIR}/scripts/train/train_tggate.py \
++            --project_path ${PROJECT_DIR} \
++            --dir_result outputs/${EXP_NAME} \
++            --patience 100 \
++            --model_name ViTB16 \
++            --ssl_name byol \
++            --batch_size 32
++    "
+\ No newline at end of file
+diff --git a/scripts/train/train_tggate.py b/scripts/train/train_tggate.py
+index f50446e..553c2f6 100755
+--- a/scripts/train/train_tggate.py
++++ b/scripts/train/train_tggate.py
+@@ -71,6 +71,11 @@ parser.add_argument('--solar_plob', type=float, default=0.)
+ parser.add_argument('--lr_min', type=float, default=1e-5)
+ parser.add_argument('--warmup_t', type=int, default=15)
+ parser.add_argument('--warmup_lr_init', type=float, default=1e-5)
++# layer-wise learning rate
++parser.add_argument('--layer_wise_lr', action='store_true')
++parser.add_argument('--backbone_lr_ratio', type=float, default=0.1)
++# rank monitor
++parser.add_argument('--rank_monitor_interval', type=int, default=5)
+ 
+ args = parser.parse_args()
+ sslmodel.utils.fix_seed(seed=args.seed, fix_gpu=True) # for seed control
+@@ -97,7 +102,7 @@ def create_sharded_dataset(urls, batch_size, transform=None, is_train=True):
+     
+     if is_train:
+         # メモリを節約するためバッファを少し小さくする
+-        dataset = dataset.shuffle(2000)
++        dataset = dataset.shuffle(1000)
+ 
+     dataset = (
+         dataset
+@@ -125,7 +130,7 @@ def prepare_data(
+     fold_idx: int = 0, 
+     num_folds: int = 5, 
+     batch_size: int = 32
+-):
++    ):
+     """shardsを分割して特定のfoldのtrain/valローダーを返す"""
+     all_shards = get_shard_file_list(data_dir)
+     if len(all_shards) == 0:
+@@ -149,7 +154,13 @@ def prepare_data(
+ 
+     # --- Datasets ---
+     # batch_size を WebDataset に渡す
+-    train_dataset = create_sharded_dataset(train_shards, batch_size=batch_size, transform=train_transform, is_train=True)
++    num_workers_train = 6
++    train_dataset = create_sharded_dataset(
++        train_shards, 
++        batch_size=batch_size, 
++        transform=train_transform, 
++        is_train=True
++    ).with_epoch(1_000_000 // (args.batch_size * num_workers_train))
+     val_dataset = create_sharded_dataset(val_shards, batch_size=batch_size, transform=val_transform, is_train=False)
+ 
+     # --- DataLoaders ---
+@@ -157,9 +168,10 @@ def prepare_data(
+     train_loader = torch.utils.data.DataLoader(
+         train_dataset, 
+         batch_size=None,
+-        num_workers=6,       # 12から6へ減らす（I/O負荷軽減）
++        num_workers=num_workers_train,             # 8コアなら6が上限
+         pin_memory=True,
+-        # prefetch_factor=2  # 一旦コメントアウトしてデフォルトに戻す
++        persistent_workers=True,   # ← 追加(worker再生成を回避)
++        prefetch_factor=4,         # ← 復活(GPUを待たせない)
+     )
+     
+     val_loader = torch.utils.data.DataLoader(
+@@ -173,7 +185,8 @@ def prepare_data(
+ 
+ # prepare model
+ def prepare_model(
+-        model_name:str='ResNet18', patience:int=7, delta:float=0, lr:float=0.003, num_epoch:int=150, freeze_backbone:bool=False
++        model_name:str='ResNet18', patience:int=7, delta:float=0, lr:float=0.003, num_epoch:int=150, freeze_backbone:bool=False,
++        layer_wise_lr:bool=False, backbone_lr_ratio:float=0.1
+     ):
+     """
+     preparation of models
+@@ -214,8 +227,25 @@ def prepare_model(
+             param.requires_grad = False
+     model, criterion = ssl_class.prepare_model(backbone, head_size=size)
+     # model.load_state_dict(torch.load(args.model_path))
+-    parameters = filter(lambda p: p.requires_grad, model.parameters())
+-    optimizer = optim.Adam(parameters, lr=lr)
++    if layer_wise_lr:
++        backbone_param_ids = set(id(p) for p in model.backbone.parameters())
++        backbone_params = []
++        head_params = []
++        for p in model.parameters():
++            if p.requires_grad:
++                if id(p) in backbone_param_ids:
++                    backbone_params.append(p)
++                else:
++                    head_params.append(p)
++        optimizer = optim.Adam([
++            {'params': backbone_params, 'lr': lr * backbone_lr_ratio},
++            {'params': head_params, 'lr': lr}
++        ])
++        print(f"Using layer-wise learning rate. Backbone LR: {lr * backbone_lr_ratio:.2e}, Head LR: {lr:.2e}")
++    else:
++        parameters = filter(lambda p: p.requires_grad, model.parameters())
++        optimizer = optim.Adam(parameters, lr=lr)
++    
+     scheduler = CosineLRScheduler(
+         optimizer, t_initial=num_epoch, lr_min=args.lr_min,
+         warmup_t=args.warmup_t, warmup_lr_init=args.warmup_lr_init, warmup_prefix=True)
+@@ -264,22 +294,19 @@ class RankMonitor:
+         return eff_rank.item(), normalized_eff_rank.item(), singular_values.numpy()
+ 
+ # train epoch
++
+ def train_epoch(model, data_loader, criterion, optimizer, epoch):
+-    """
+-    train for epoch
+-    with minibatch
+-    """
+-    model.train() # training
++    model.train()
+     train_batch_loss = []
+-    # train
+     for data in tqdm(data_loader, desc=f"Epoch {epoch + 1}"):
+-        loss = ssl_class.calc_loss(
+-            model, data, criterion,
+-        )
++        optimizer.zero_grad(set_to_none=True)
++        with torch.amp.autocast(device_type="cuda", dtype=torch.bfloat16):  # 追加
++            loss = ssl_class.calc_loss(model, data, criterion)
++        loss.backward()
++        optimizer.step()
++        if hasattr(model, 'update_moving_average'):
++            model.update_moving_average()
+         train_batch_loss.append(loss.item())
+-        optimizer.zero_grad() # reset gradients
+-        loss.backward() # backpropagation
+-        optimizer.step() # update parameters
+     return model, np.mean(train_batch_loss)
+ 
+ # train
+@@ -300,9 +327,11 @@ def train(model, criterion, optimizer, scheduler, early_stopping, num_epoch:int=
+             f'Epoch: {epoch + 1}, train_loss: {train_epoch_loss:.4f}'
+             )
+         LOGGER.logger.info('elapsed_time: {:.2f} min'.format((time.time() - start)/60))
+-        eff_rank, normalized_eff_rank, s_values = monitor.compute_effective_rank(model, val_loader, DEVICE)
+-        LOGGER.logger.info(f'Effective Rank: {eff_rank:.2f}')
+-        LOGGER.logger.info(f'Normalized Effective Rank: {normalized_eff_rank:.2f}')
++        if (epoch + 1) % args.rank_monitor_interval == 0 or (epoch + 1) == num_epoch:
++            eff_rank, normalized_eff_rank, s_values = monitor.compute_effective_rank(model, val_loader, DEVICE)
++            LOGGER.logger.info(f'Effective Rank: {eff_rank:.2f}')
++            if run:
++                run.log({"effective_rank": eff_rank, "normalized_effective_rank": normalized_eff_rank}, step=epoch)
+         # LOGGER.logger.info(f'Singular Values: {s_values}')
+         # save model
+         state = {
+@@ -315,7 +344,7 @@ def train(model, criterion, optimizer, scheduler, early_stopping, num_epoch:int=
+             "train_loss":train_loss
+         }
+         if run:
+-            run.log({"train_loss": train_epoch_loss, "effective_rank": eff_rank, "normalized_effective_rank": normalized_eff_rank})
++            run.log({"train_loss": train_epoch_loss})
+         torch.save(state, f'{DIR_NAME}/state.pt')
+         LOGGER.save_logger(fileout=file_log)
+         # state check
+@@ -328,13 +357,15 @@ def train(model, criterion, optimizer, scheduler, early_stopping, num_epoch:int=
+     return model, train_loss, True
+ 
+ def main():
++    torch.backends.cudnn.benchmark = True
+     run = wandb.init(project="tox-patho-tggate",
+                      entity="benzelongji-the-university-of-tokyo",
+                      name=f"{args.note}_{args.ssl_name}_{args.model_name}_lr{args.lr}_epoch{args.num_epoch}_patience{args.patience}_delta{args.delta}_freeze{args.freeze_backbone}",
+                      config=args.__dict__)
+     # 1. Self-Supervised Learning
+     model, criterion, optimizer, scheduler, early_stopping = prepare_model(
+-        model_name=args.model_name, patience=args.patience, delta=args.delta, lr=args.lr, num_epoch=args.num_epoch, freeze_backbone=args.freeze_backbone
++        model_name=args.model_name, patience=args.patience, delta=args.delta, lr=args.lr, num_epoch=args.num_epoch, freeze_backbone=args.freeze_backbone,
++        layer_wise_lr=args.layer_wise_lr, backbone_lr_ratio=args.backbone_lr_ratio
+     )
+     model, train_loss, flag_finish = train(
+         model, criterion, optimizer, scheduler, early_stopping, num_epoch=args.num_epoch, run=run
+@@ -365,6 +396,19 @@ if __name__ == '__main__':
+     now = datetime.datetime.now().strftime('%H%M%S')
+     LOGGER = sslmodel.utils.logger_save()
+     LOGGER.init_logger(filename, DIR_NAME, now, level_console='debug') 
++
++    # 実行条件（引数）を JSON ファイルに保存し、ログ（標準出力）にもダンプする
++    import json
++    config_json_path = os.path.join(DIR_NAME, 'config.json')
++    try:
++        with open(config_json_path, 'w') as f:
++            json.dump(vars(args), f, indent=4, ensure_ascii=False)
++        LOGGER.logger.info(f"Saved run configuration to {config_json_path}")
++    except Exception as e:
++        LOGGER.logger.warning(f"Failed to save run configuration: {e}")
++        
++    LOGGER.logger.info(f"Execution Arguments:\n{json.dumps(vars(args), indent=4)}")
++
+     DEVICE = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu') # get device
+     # Set SSL class
+     ssl_class=utils.DICT_SSL[args.ssl_name](DEVICE=DEVICE)
+diff --git a/src/sslmodel/utils.py b/src/sslmodel/utils.py
+index 056dad1..ba09cd1 100755
+--- a/src/sslmodel/utils.py
++++ b/src/sslmodel/utils.py
+@@ -78,6 +78,7 @@ def ssl_transform(
+                                         std=[0.229, 0.224, 0.225])
+     # augmentation
+     augmentation = transforms.Compose([
++        transforms.RandomResizedCrop(size),
+         transforms.RandomHorizontalFlip(p=0.5),
+         random_rotation_transform(rr_prob=1., rr_degrees=[0,180]),
+         transforms.RandomApply([
+@@ -88,7 +89,6 @@ def ssl_transform(
+             transforms.GaussianBlur((3, 3), (1.0, 2.0))], p=blur_plob
+             ),
+         RandomSolarization(prob=solar_plob),
+-        transforms.RandomResizedCrop(size),
+         transforms.ToTensor(),
+         normalize
+     ])
+@@ -116,6 +116,7 @@ def weak_strong_transform(
+                                         std=[0.229, 0.224, 0.225])
+     # augmentation (weak)
+     weak_augmentation = transforms.Compose([
++        transforms.RandomResizedCrop(size),
+         transforms.RandomHorizontalFlip(p=0.5),
+         random_rotation_transform(rr_prob=1., rr_degrees=[0,180]),
+         transforms.RandomApply([
+@@ -126,13 +127,13 @@ def weak_strong_transform(
+             transforms.GaussianBlur((3, 3), (1.0, 2.0))], p=blur_plob_w
+             ),
+         RandomSolarization(prob=solar_plob_w),
+-        transforms.RandomResizedCrop(size),
+         transforms.ToTensor(),
+         normalize
+     ])
+ 
+     # augmentation (strong)
+     strong_augmentation = transforms.Compose([
++        transforms.RandomResizedCrop(size),
+         transforms.RandomHorizontalFlip(p=0.5),
+         random_rotation_transform(rr_prob=1., rr_degrees=[0,180]),
+         transforms.RandomApply([
+@@ -143,7 +144,6 @@ def weak_strong_transform(
+             transforms.GaussianBlur((3, 3), (1.0, 2.0))], p=blur_plob_s
+             ),
+         RandomSolarization(prob=solar_plob_s),
+-        transforms.RandomResizedCrop(size),
+         transforms.ToTensor(),
+         normalize
+     ])
+diff --git a/wandb/latest-run b/wandb/latest-run
+index ca3d12a..5896253 120000
+--- a/wandb/latest-run
++++ b/wandb/latest-run
+@@ -1 +1 @@
+-run-20260521_081735-25umjvnw
+\ No newline at end of file
++run-20260612_181504-x181bv83
+\ No newline at end of file

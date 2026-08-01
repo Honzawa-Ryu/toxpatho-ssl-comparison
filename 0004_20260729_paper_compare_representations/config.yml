@@ -1,0 +1,9 @@
+# ============================================================
+# paper 版の表現比較（CKA / ARI / プロトタイプ / t-SNE）
+# ============================================================
+
+analysis:
+  methods_config: "scripts/analysis/methods_paper.yaml"
+  input_exp: "0003_20260729_paper_extract_embeddings"
+  k: 10
+  rbf: true

@@ -1,0 +1,18 @@
+# ============================================================
+# Experiment Configuration — blur_qc pipeline 検証実行
+# ============================================================
+# Goal.md の受け入れ基準(§9)を満たすことを確認するための小規模検証。
+# 対象WSIは2枚・n_patches=50に抑え、実データでの動作確認に留める
+# (998WSI全量・n_patches=1000での本実行は別途 §7 の容量確認後に行う)。
+# ============================================================
+
+analysis:
+  wsi_ids: ["10306", "10310"]
+  wsi_dir: data/moo_collected_tggate_wsi
+  coords_dir: data/trident_processed/20x_224px_0px_overlap/patches
+  scores_dir: data/blur_qc/scores
+  patches_dir: data/blur_qc/patches
+  patch_size: 224
+  n_patches: 50
+  seed: 42
+  percentile: 25.0
