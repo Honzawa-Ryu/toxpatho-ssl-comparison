@@ -1,0 +1,25 @@
+# ============================================================
+# Experiment Configuration — blur_qc Step 2 (sample_patches_memmap) 全WSIバッチ
+# ============================================================
+# 全998WSIをnum_chunks個に分割し、arrayジョブの各taskが1chunk分を処理する
+# (Goal.md §7)。投入前に必ず以下を確認すること:
+#   - experiments/0008_.../ (score_blur) が完了し、data/blur_qc/scores/ に
+#     全WSI分の {wsi_id}_blur.h5 が揃っていること。
+#   - percentile: Goal.md §5.1の通り、スコア分布のヒストグラムを目視確認
+#     してから決めること(未確認のまま実行しない)。下の値はプレースホルダ。
+#   - data/blur_qc/patches/ の想定容量(約140GiB, Goal.md §7)を利用者に
+#     確認してから投入すること。
+#   - num_chunks を変えたら run_slurm.sh の GRID_VALUES と
+#     #SBATCH --array=0-N も合わせて変更すること(N = num_chunks - 1)。
+# ============================================================
+
+analysis:
+  scores_dir: data/blur_qc/scores
+  wsi_dir: data/moo_collected_tggate_wsi
+  output_dir: data/blur_qc/patches
+  threshold_scope: per_slide  # "none" | "per_slide" | "global"
+  percentile: null  # TODO: ヒストグラム確認後に設定すること(§5.1)
+  n_patches: 1000
+  seed: 42
+  patch_size: 224
+  num_chunks: 20

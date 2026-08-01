@@ -1,0 +1,17 @@
+# ============================================================
+# Experiment Configuration — blur_qc Step 1 (score_blur) 全WSIバッチ
+# ============================================================
+# 全998WSIをnum_chunks個に分割し、arrayジョブの各taskが1chunk分を処理する
+# (Goal.md §7)。投入前に必ず以下を確認すること:
+#   - experiments/0007_20260801_blur_qc_pipeline/ での検証結果
+#     (verification_report.md) で動作を確認済みであること。
+#   - num_chunks を変えたら run_slurm.sh の GRID_VALUES と
+#     #SBATCH --array=0-N も合わせて変更すること(N = num_chunks - 1)。
+# ============================================================
+
+analysis:
+  wsi_dir: data/moo_collected_tggate_wsi
+  coords_dir: data/trident_processed/20x_224px_0px_overlap/patches
+  output_dir: data/blur_qc/scores
+  patch_size: 224
+  num_chunks: 20
