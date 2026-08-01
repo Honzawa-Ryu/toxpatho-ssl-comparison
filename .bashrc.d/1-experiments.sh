@@ -33,19 +33,14 @@ lsx() {
         return 1
     fi
 
+    source "${root}/scripts/exp_common.sh"
+
     echo "🔍 Latest Experiments in [$(basename "$root")]:"
 
-    ls -d "${root}/experiments/"*/ 2>/dev/null \
+    exp_list_names "${root}/experiments" \
+        | tail -n 10 \
         | sort -r \
-        | head -n 10 \
-        | awk -F/ '
-            {
-                name=$(NF-1)
-                split(name, arr, "_")
-                id=arr[1]
-                printf "%-6s %s\n", id, name
-            }
-        '
+        | awk -F_ '{ printf "%-6s %s\n", $1, $0 }'
 }
 
 # CD into experiment
@@ -56,24 +51,12 @@ cdx() {
         return 1
     fi
 
-    local target=""
+    source "${root}/scripts/exp_common.sh"
 
-    if [[ "$1" =~ ^[0-9]+$ ]]; then
-        local padded
-        padded=$(printf "%04d" "$((10#$1))")
-        target=$(
-            ls -d "${root}/experiments/${padded}_"*/ 2>/dev/null \
-            | head -n1
-        )
-    else
-        target=$(
-            ls -d "${root}/experiments/"*/ 2>/dev/null \
-            | sort -r \
-            | head -n1
-        )
-    fi
+    local target
+    target=$(exp_resolve_dir "${root}/experiments" "$1")
 
-    if [ -z "$target" ]; then
+    if [ -z "$target" ] || [ ! -d "$target" ]; then
         echo "❌ Experiment not found."
         return 1
     fi

@@ -8,6 +8,18 @@
 set -euo pipefail
 
 # =====================================================
+# Required variables
+#
+# ここより下は set -u なので、未定義のまま進むと「unbound variable」だけを
+# 残してジョブが無言で死ぬ。ERR trap を張るのは後（Signal handlers 節）なので、
+# メタデータもSlack通知も残らない。原因の分かるメッセージで先に落とす。
+# =====================================================
+
+: "${PROJECT_ROOT:?PROJECT_ROOT が未設定です。run_slurm.sh から source してください}"
+: "${EXP_NAME:?EXP_NAME が未設定です。run_slurm.sh から source してください}"
+: "${SIF_PATH:?SIF_PATH（apptainerのSIFイメージのパス）が未設定です。~/.bashrc で export してください（README.md「セットアップ」参照）}"
+
+# =====================================================
 # Config
 # =====================================================
 
@@ -48,18 +60,34 @@ fi
 # =====================================================
 # Run mode
 #   single : RUN_COMMAND を1つ実行（デフォルト）
-#   array  : SLURM_ARRAY_TASK_ID で CONFIGS を引く
+#   array  : ARRAY_TASK_ID で CONFIGS を引く
 #   seq    : CONFIGS をループして順番に実行
 # =====================================================
 
 RUN_MODE="${RUN_MODE:-single}"
 
-# run_slurm.sh の #SBATCH --time= を直接読む（run_slurm.sh は #SBATCH ヘッダーに
-# しか --time を持たず、DEFAULT_TIME のようなbash変数はもう存在しないため）。
-JOB_TIME_LIMIT=$(
-    grep -oP '(?<=^#SBATCH --time=)\S+' "${PROJECT_ROOT}/experiments/${EXP_NAME}/run_slurm.sh" \
-        | head -n1
-)
+# run_slurm.sh の時間制限を直接読む（run_slurm.sh はヘッダーにしか時間制限を持たず、
+# DEFAULT_TIME のようなbash変数はもう存在しないため）。
+#
+# PBS スクリプトは `#SBATCH --time=` ではなく `#PBS -l walltime=` を持つので
+# 両方を試す。また、これは通知の表示用の値でしかないので、どちらにもヒットしない
+# 場合でもジョブを落としてはいけない（grep の exit 1 が pipefail + set -e で
+# 致命傷になり、ERR trap 設置前なので無言死する）。
+_read_job_time_limit() {
+    local run_script="${PROJECT_ROOT}/experiments/${EXP_NAME}/run_slurm.sh"
+    local value=""
+
+    [ -f "${run_script}" ] || { echo "unknown"; return 0; }
+
+    value=$(grep -oP '(?<=^#SBATCH --time=)\S+' "${run_script}" | head -n1 || true)
+    if [ -z "${value}" ]; then
+        value=$(grep -oP '(?<=^#PBS -l walltime=)\S+' "${run_script}" | head -n1 || true)
+    fi
+
+    echo "${value:-unknown}"
+}
+
+JOB_TIME_LIMIT=$(_read_job_time_limit)
 export JOB_TIME_LIMIT
 
 # =====================================================
@@ -82,51 +110,65 @@ export SLURM_LOG_FILE="${JOB_LOG_DIR}/slurm.out"
 
 # =====================================================
 # Metadata helper
+#
+# run_metadata.yaml はフラットな key: value しか持たないので、読み書きに
+# Python も PyYAML も使わない。ここは apptainer の外・.venv の外で走る
+# ネイティブ bash レイヤーであり、ログインノード/計算ノードのシステム python に
+# yaml が入っている保証が無いため、依存すると全ジョブがメタデータ初期化で落ちる。
+#
+# 値は必ずダブルクォートで括る。`196:00:00` のような値は、クォートしないと
+# YAML 1.1 の 60進数として整数に解釈されてしまう。
 # =====================================================
 
+_yaml_escape() {
+    # ダブルクォート内で意味を持つ文字だけを潰す
+    printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'
+}
+
+_yaml_put() {
+    local yaml_file="$1"
+    local key="$2"
+    local value
+    value=$(_yaml_escape "$3")
+
+    if [ -f "${yaml_file}" ] && grep -q "^${key}:" "${yaml_file}"; then
+        # 既存キーは行の位置を保ったまま置換する
+        local tmp="${yaml_file}.tmp.$$"
+        awk -v k="${key}" -v v="${value}" '
+            $0 ~ "^" k ":" { printf "%s: \"%s\"\n", k, v; next }
+            { print }
+        ' "${yaml_file}" > "${tmp}"
+        mv "${tmp}" "${yaml_file}"
+    else
+        printf '%s: "%s"\n' "${key}" "${value}" >> "${yaml_file}"
+    fi
+}
+
 update_metadata() {
-    local key="$1"
-    local value="$2"
-    local yaml_file="${JOB_LOG_DIR}/run_metadata.yaml"
-
-    python3 - <<EOF
-from pathlib import Path
-import yaml
-
-path = Path("${yaml_file}")
-data = yaml.safe_load(path.read_text())
-data["${key}"] = "${value}"
-path.write_text(yaml.safe_dump(data, sort_keys=False))
-EOF
+    _yaml_put "${JOB_LOG_DIR}/run_metadata.yaml" "$1" "$2"
 }
 
 # =====================================================
 # Metadata
 # =====================================================
 
-python3 - <<EOF
-from pathlib import Path
-import yaml
+GIT_COMMIT=$(git -C "${PROJECT_ROOT}" rev-parse HEAD 2>/dev/null || echo "git_not_available")
 
-data = {
-    "exp_name":   "${EXP_NAME}",
-    "job_id":     "${JOB_ID}",
-    "partition":  "${JOB_PARTITION}",
-    "node":       "${NODENAME}",
-    "git_commit": "$(git -C "${PROJECT_ROOT}" rev-parse HEAD)",
-    "start_time": "$(date --iso-8601=seconds)",
-    "time_limit": "${JOB_TIME_LIMIT}",
-    "run_mode":   "${RUN_MODE}",
-    "status":     "RUNNING",
-}
+: > "${JOB_LOG_DIR}/run_metadata.yaml"
 
-if "${RUN_MODE}" == "array":
-    data["array_task_id"] = "${ARRAY_TASK_ID}"
+update_metadata "exp_name"   "${EXP_NAME}"
+update_metadata "job_id"     "${JOB_ID}"
+update_metadata "partition"  "${JOB_PARTITION}"
+update_metadata "node"       "${NODENAME}"
+update_metadata "git_commit" "${GIT_COMMIT}"
+update_metadata "start_time" "$(date --iso-8601=seconds)"
+update_metadata "time_limit" "${JOB_TIME_LIMIT}"
+update_metadata "run_mode"   "${RUN_MODE}"
+update_metadata "status"     "RUNNING"
 
-Path("${JOB_LOG_DIR}/run_metadata.yaml").write_text(
-    yaml.safe_dump(data, sort_keys=False)
-)
-EOF
+if [ "${RUN_MODE}" = "array" ]; then
+    update_metadata "array_task_id" "${ARRAY_TASK_ID}"
+fi
 
 # =====================================================
 # Move Slurm log helper
@@ -163,11 +205,11 @@ _move_slurm_log() {
     else
         if [ "${RUN_MODE}" = "array" ]; then
             # runx が --output=%A_%a_${exp_name}.out で投入するため、
-            # %A（親のarray job id = SLURM_ARRAY_JOB_ID）を使う。
-            # SLURM_JOB_ID は各タスク固有の値で %A とは異なるため使わない。
-            log_file="${PROJECT_ROOT}/logs/${EXP_NAME}/${SLURM_ARRAY_JOB_ID}_${SLURM_ARRAY_TASK_ID}_${EXP_NAME}.out"
+            # %A（親のarray job id = ARRAY_JOB_ID）を使う。
+            # JOB_ID は各タスク固有の値で %A とは異なるため使わない。
+            log_file="${PROJECT_ROOT}/logs/${EXP_NAME}/${ARRAY_JOB_ID}_${ARRAY_TASK_ID}_${EXP_NAME}.out"
         else
-            log_file="${PROJECT_ROOT}/logs/${EXP_NAME}/${SLURM_JOB_ID}_${EXP_NAME}.out"
+            log_file="${PROJECT_ROOT}/logs/${EXP_NAME}/${JOB_ID}_${EXP_NAME}.out"
         fi
 
         if [ -f "${log_file}" ]; then
@@ -222,20 +264,28 @@ _get_job_state() {
         else
             echo "UNKNOWN"
         fi
+    elif [ "${SCHEDULER}" = "local" ]; then
+        # SCHEDULER=local には問い合わせ先が無い。終了コードだけが判断材料なので
+        # COMPLETED を返し、_handle_final_state 側の exit_code 判定に委ねる。
+        echo "COMPLETED"
     else
+        local state=""
         if command -v sacct &>/dev/null; then
-            sacct \
-                -j "${SLURM_JOB_ID}" \
-                --format=JobIDRaw,State \
-                --parsable2 \
-                --noheader \
-            | awk -F'|' -v id="${SLURM_JOB_ID}" '$1==id {print $2; exit}'
+            state=$(
+                sacct \
+                    -j "${JOB_ID}" \
+                    --format=JobIDRaw,State \
+                    --parsable2 \
+                    --noheader \
+                | awk -F'|' -v id="${JOB_ID}" '$1==id {print $2; exit}'
+            )
         elif command -v scontrol &>/dev/null; then
-            scontrol show job "${SLURM_JOB_ID}" 2>/dev/null \
-                | grep -oP 'JobState=\K\w+' || echo "UNKNOWN"
-        else
-            echo "UNKNOWN"
+            state=$(
+                scontrol show job "${JOB_ID}" 2>/dev/null \
+                    | grep -oP 'JobState=\K\w+' || true
+            )
         fi
+        echo "${state:-UNKNOWN}"
     fi
 }
 
@@ -286,7 +336,10 @@ _handle_final_state() {
             fi
             ;;
 
-        RUNNING|COMPLETING|CONFIGURING)
+        # UNKNOWN = sacct/scontrol/qstat に問い合わせられなかった（またはまだ
+        # 状態が確定していない）ケース。状態が取れないことそれ自体は失敗ではないので、
+        # RUNNING 等と同じく本体コマンドの終了コードで判定する。
+        RUNNING|COMPLETING|CONFIGURING|UNKNOWN)
             if [ "${exit_code}" -eq 0 ]; then
 
                 update_metadata "status" "COMPLETED"
@@ -355,7 +408,10 @@ trap on_terminate TERM INT
 on_time_limit_warning() {
     echo "TIME_LIMIT_WARNING RECEIVED $(date)" \
         >> "${JOB_LOG_DIR}/signal_debug.log"
-    notify_fail_fast "TIME_LIMIT_WARNING"
+    # ⚡ INTERRUPTED (notify_fail_fast) は使わない。README の通知表では
+    # ⚡ =「キャンセル・割り込み」であり、ジョブが継続しているのに中断したと
+    # 誤解される。⏳ 専用の通知を送る。
+    notify_time_limit_warning "TIME_LIMIT_WARNING"
 }
 
 trap on_time_limit_warning USR1
@@ -436,9 +492,15 @@ notify_start
 
 # =====================================================
 # Scratch
+#
+# SCRATCH_ROOT はノード付属SSDのマウントポイント。既定は /scratch だが、
+# 別の場所にマウントしているサイトや、スモークテスト（tests/smoke_slurm_entry.sh）
+# のように /scratch が存在しない環境のために上書きできるようにしてある。
 # =====================================================
 
-export SCRATCH_DIR="/scratch/${USER}/${EXP_NAME}_${JOB_ID}"
+SCRATCH_ROOT="${SCRATCH_ROOT:-/scratch}"
+
+export SCRATCH_DIR="${SCRATCH_ROOT}/${USER}/${EXP_NAME}_${JOB_ID}"
 
 mkdir -p "${SCRATCH_DIR}"
 
@@ -502,7 +564,7 @@ _run_single() {
 
     apptainer exec \
         --nv \
-        --bind "/scratch/${USER}" \
+        --bind "${SCRATCH_ROOT}/${USER}" \
         --bind "${SCRATCH_DIR}" \
         --env UV_CACHE_DIR="${SCRATCH_DIR}/.uv_cache" \
         "${SIF_PATH}" \
@@ -602,7 +664,7 @@ fi
 
 if [ -n "${SCRATCH_DIR:-}" ] \
    && [ -d "${SCRATCH_DIR}" ] \
-   && [[ "${SCRATCH_DIR}" == /scratch/* ]]; then
+   && [[ "${SCRATCH_DIR}" == "${SCRATCH_ROOT}"/* ]]; then
 
     echo "⚠️  Scratch directory used during this run was NOT auto-deleted: ${SCRATCH_DIR}" >&2
     echo "⚠️  Please remove it manually once no longer needed (node-local SSD capacity)." >&2

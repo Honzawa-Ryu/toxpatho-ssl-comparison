@@ -16,9 +16,12 @@ echo "=========================================="
 
 # Execute uv sync inside the Apptainer container
 # Note: 'cd' into PROJECT_ROOT inside the container to ensure .venv is created in the right place
+# pyproject.toml の重い依存（torch/nlp/gbdt/serving）は optional-dependencies に
+# 分離されている。--all-extras を付けず素の `uv sync` だけだと、それらが入らず
+# 実験の大半が動かなくなるため、ここでは常に全部入れる。
 apptainer exec --nv "${SIF_PATH}" bash -c "
     cd ${PROJECT_ROOT}
-    uv sync
+    uv sync --all-extras
 "
 
 echo "=========================================="

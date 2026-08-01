@@ -1,8 +1,8 @@
 #!/bin/bash
 #SBATCH --job-name=run_jupyter_server
 #SBATCH --gres=gpu:0
-#SBATCH --output=jupyter-server.out
-#SBATCH --error=jupyter-server.out
+#SBATCH --output=logs/jupyter-server-%j.out
+#SBATCH --error=logs/jupyter-server-%j.out
 #SBATCH --cpus-per-task=1
 #SBATCH --time=168:00:00
 

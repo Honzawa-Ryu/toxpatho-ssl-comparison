@@ -65,6 +65,8 @@ export SLACK_WEBHOOK_URL="https://hooks.slack.com/services/..."
 │           ├── run_metadata.yaml
 │           └── command.sh
 ├── lib/                  # 共通ライブラリコード
+├── libraries/            # まだ lib/ に昇格させていない共有コード置き場（自由記述）
+├── notebooks/            # 探索的なJupyter Notebook置き場（`make jupyter`で使用）
 ├── templates/            # 実験作成時のテンプレートファイル
 ├── scripts/              # ジョブ実行・監視用の内部スクリプト
 │   ├── slurm_entry.sh
@@ -118,9 +120,9 @@ make create_exp name=<exp_name>
 
 ```bash
 #SBATCH --gres=gpu:1
-#SBATCH --cpus-per-task=32
-#SBATCH --mem=80g
-#SBATCH --time=24:00:00
+#SBATCH --cpus-per-task=20
+#SBATCH --mem=110g
+#SBATCH --time=196:00:00
 # ↑ を大きく変える場合は --partition と --signal も手動で合わせて見直す
 
 # 実行コマンド

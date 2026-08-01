@@ -9,7 +9,9 @@
 	failed_log_clean \
 	clean_failed \
 	preflight \
-	jupyter
+	jupyter \
+	test \
+	shellcheck
 
 # =========================================================
 # 0. Initial setup
@@ -99,11 +101,12 @@ log_clean:
 	@root=$$(git rev-parse --show-toplevel); \
 	find "$$root/logs" -maxdepth 2 -name "*_*.out" | while read f; do \
 		base=$$(basename "$$f"); \
-		job_id=$$(echo "$$base" | cut -d_ -f1); \
 		exp_dir=$$(dirname "$$f"); \
-		dest="$$exp_dir/$$job_id"; \
+		exp_name=$$(basename "$$exp_dir"); \
+		id_part=$${base%_$${exp_name}.out}; \
+		dest="$$exp_dir/$$id_part"; \
 		mkdir -p "$$dest"; \
-		mv "$$f" "$$dest/slurm.out" && echo "  $$base → $$job_id/slurm.out"; \
+		mv "$$f" "$$dest/slurm.out" && echo "  $$base → $$id_part/slurm.out"; \
 	done; \
 	find "$$root/logs" -maxdepth 2 -name "watcher_*.log" | while read f; do \
 		base=$$(basename "$$f"); \
@@ -130,10 +133,20 @@ failed_log_clean:
 			echo "  ❌ Deleting failed job log directory: $$(basename "$$job_dir") (Status: $$status)"; \
 			rm -rf "$$job_dir"; \
 		elif [ "$$status" = "RUNNING" ]; then \
-			if [ -n "$$(find "$$meta" -mmin +1440 2>/dev/null)" ]; then \
-				job_dir=$$(dirname "$$meta"); \
-				echo "  ❌ Deleting hung RUNNING job log directory (inactive >24h): $$(basename "$$job_dir")"; \
-				rm -rf "$$job_dir"; \
+			job_dir=$$(dirname "$$meta"); \
+			job_id=$$(basename "$$job_dir" | cut -d_ -f1); \
+			if command -v squeue >/dev/null 2>&1; then \
+				if [ -z "$$(squeue -h -j "$$job_id" 2>/dev/null)" ]; then \
+					echo "  ❌ Deleting stale RUNNING job log directory (job $$job_id not in queue): $$(basename "$$job_dir")"; \
+					rm -rf "$$job_dir"; \
+				fi; \
+			elif command -v qstat >/dev/null 2>&1; then \
+				if ! qstat -f "$$job_id" >/dev/null 2>&1; then \
+					echo "  ❌ Deleting stale RUNNING job log directory (job $$job_id not in queue): $$(basename "$$job_dir")"; \
+					rm -rf "$$job_dir"; \
+				fi; \
+			else \
+				echo "  ⚠️  Skipping RUNNING job log directory (no scheduler command available to verify): $$(basename "$$job_dir")"; \
 			fi; \
 		fi; \
 	done; \
@@ -175,3 +188,24 @@ jupyter:
 
 preflight:
 	@python3 -m scripts.preflight_check
+
+# =========================================================
+# 9. Tests / lint
+# =========================================================
+
+test:
+	@echo "🧪 Shell smoke tests"
+	@for t in tests/*.sh; do \
+		echo "--- $$t ---"; \
+		bash "$$t" || exit 1; \
+	done
+	@echo ""
+	@echo "🧪 pytest (lib/)"
+	@pytest lib/ -v
+
+shellcheck:
+	@find . \
+		-path ./.venv -prune -o \
+		-path ./experiments -prune -o \
+		-name "*.sh" -print \
+	| xargs shellcheck

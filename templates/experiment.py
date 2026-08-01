@@ -47,9 +47,15 @@ def setup_logger(run_dir: Path, name: str = "experiment") -> logging.Logger:
     return logger
 
 
-def load_config(exp_dir: Path) -> dict:
-    """Load config.yml from the experiment directory."""
-    config_path = exp_dir / "config.yml"
+def load_config(config_path: Path) -> dict:
+    """Load a config YAML file.
+
+    The path comes from --config, which run_slurm.sh passes as a path relative
+    to the experiment directory (so `--config config.yml` means the config.yml
+    sitting next to this script). Resolving it here rather than hardcoding
+    exp_dir/config.yml is what makes it possible to feed the same
+    experiment.py a different config.
+    """
     if not config_path.exists():
         return {}
     with open(config_path) as f:
@@ -59,6 +65,13 @@ def load_config(exp_dir: Path) -> dict:
 def parse_args() -> argparse.Namespace:
     """Define CLI args for all variable dimensions (used in GRID_ARGS / RUN_COMMAND)."""
     parser = argparse.ArgumentParser()
+    # Config file, resolved relative to this experiment directory.
+    # run_slurm.sh's RUN_COMMAND passes `--config config.yml` by default.
+    parser.add_argument(
+        "--config",
+        default="config.yml",
+        help="config YAML (experiment ディレクトリからの相対パス、または絶対パス)",
+    )
     # Add one argument per swept dimension (required=True).
     # These must match GRID_ARGS entries in run_slurm.sh.
     # Example:
@@ -92,7 +105,10 @@ def main() -> None:
     run_dir = get_run_dir(project_root, __file__, variant_key, output_root=output_root)
     logger = setup_logger(run_dir, exp_name)
 
-    config = load_config(Path(__file__).parent)
+    config_path = Path(args.config)
+    if not config_path.is_absolute():
+        config_path = Path(__file__).parent / config_path
+    config = load_config(config_path)
     seed: int = config.get("seed", 42)
 
     write_run_metadata(run_dir, exp_name=exp_name, variant_key=variant_key)

@@ -35,8 +35,8 @@
 | 機能 | コマンド / 仕組み | 役割 |
 |---|---|---|
 | **実験自動作成** | `make create_exp name=<名前>` | テンプレートから自動採番（4桁ID）で実験ディレクトリを作る（Git操作は行わない。ブランチは daily/YYMMDD 方式でユーザーが `gstart` で作成済みのものを使う）。 |
-| **自動事前検証** | `make preflight` | `config.yml` との実装キー不整合、シード固定漏れ、ハードコード書き込みの有無を一撃で静的解析する。 |
-| **安全なジョブ投入** | `runx <id>`（capsule内では `sbatch` 直接投入が禁止されているため、agentは `artifacts/proposed_train.sbatch` を書いてユーザーに委ねる） | ログインノードでの誤実行防止、二重実行警告、GRID組み合わせ数が上限（50件）を超える場合の過剰投入警告を自動で行う。 |
+| **自動事前検証** | `make preflight` | `config.yml` との実装キー不整合、GRID組み合わせ数が上限（50件）を超える場合の警告、ハードコード書き込みの有無を一撃で静的解析する。 |
+| **安全なジョブ投入** | `runx <id>`（capsule内では `sbatch` 直接投入が禁止されているため、agentは `artifacts/proposed_train.sbatch` を書いてユーザーに委ねる） | Git working treeがdirtyな場合は投入を止める（`--allow-dirty` で上書き可）。ログインノードでの誤実行防止・二重実行警告は行わない。 |
 | **失敗・ゾンビログ消去** | `make clean_failed` | `FAILED`や`TIMEOUT`のジョブフォルダだけでなく、24時間以上動きのないハングした`RUNNING`ジョブや、リネーム等で孤立した実験ログを自動で検出・削除する。 |
 
 ---

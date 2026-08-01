@@ -37,7 +37,7 @@
 | 関数 | 内容 |
 |---|---|
 | `sanitize_variant_key(variant_key)` | `variant_key`に`/`が含まれる場合、最後の要素だけを取り出して1階層のディレクトリ名に正規化する(`review-exp`/`roadmap`のglobパターンが1階層構造を前提にしているため) |
-| `get_run_dir(project_root, script_path, variant_key)` | `outputs/{exp_name}/{variant_key}/`を返す。`completion.json`の`status`が`completed`なら`sys.exit(0)`で再実行をガードし、`guard_skipped_at`を記録する(completedガード) |
+| `get_run_dir(project_root, script_path, variant_key, output_root=None)` | `output_root`未指定時は`outputs/{exp_name}/{variant_key}/`を返す。`output_root`指定時は書き込み先を`{output_root}/{exp_name}/{variant_key}/`に切り替える（例: scratch側への出力）が、completedガードは`output_root`に関わらず常に`project_root/outputs/{exp_name}/{variant_key}/completion.json`を見る。`status`が`completed`なら`sys.exit(0)`で再実行をガードし、`guard_skipped_at`を記録する |
 | `write_run_metadata(run_dir, **kwargs)` | `completion.json`に`job_id`/`array_task_id`/`started_at`/`status=running`等のメタデータを書き込む |
 | `complete_run(run_dir)` | `completion.json`の`status`を`completed`に更新し、`completed_at`を記録する |
 

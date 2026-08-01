@@ -217,6 +217,10 @@ outputs/
 logs/
 *.out
 
+# create_exp.sh が実験作成時のスナップショットとして書き込む未コミット差分。
+# 実験ごとに変わる大きなdiffなのでリポジトリには含めない。
+experiments/*/uncommitted_changes.diff
+
 # agent files
 # .claude/
 # .antigravityignore

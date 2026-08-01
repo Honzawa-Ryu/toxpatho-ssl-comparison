@@ -1,9 +1,13 @@
 [project]
 name = "template-daily-research-experiments"
 version = "0.1.0"
-description = "Knowledge graph construction and retrieval with PubMed"
+description = "HPC experiment management template for Slurm/PBS-based daily research experiments"
 readme = "README.md"
 requires-python = "==3.12.*"
+# ここは「軽量デフォルト」= jupyter/データ処理/可視化などどの実験でもほぼ使う一式のみ。
+# 重いML系(torch/transformers/vllm等)はoptional-dependenciesに分離し、
+# tools/uv_sync.sh 側で `uv sync --all-extras` して現状どおり全部入れる
+# （個別に軽く済ませたい場合は `uv sync --extra torch --extra nlp` のように選択可能）。
 dependencies = [
     "jupyterlab",
     "ipython",
@@ -12,36 +16,30 @@ dependencies = [
     "numpy",
     "optuna",
     "pandas",
-    "dask",
-    "fastparquet",
-    "lightgbm",
+    "pyyaml",
     "plotly",
     "polars",
-    "elasticsearch>=8.0.0,<9.0.0",
     "pyarrow",
     "tqdm",
     "requests",
     "scikit-learn",
     "scipy",
     "seaborn",
-
     "slackweb",
-    "wandb",
-    "xgboost",
-    "torch==2.11.0+cu130",
-    "torchvision",
-    "torchaudio",
-    "transformers",
-    "datasets",
-    "lxml",
-    "python-dotenv",
-    "cython",
-    "spacy",
-    "fast-langdetect",
-    "scispacy",
     "duckdb",
     "pynvml",
     "psutil",
+    "python-dotenv",
+    "matplotlib-venn>=1.1.2",
+]
+
+[project.optional-dependencies]
+# GPU/深層学習まわり（重い・CUDA依存）
+torch = [
+    "torch==2.11.0+cu130",
+    "torchvision",
+    "torchaudio",
+    "wandb",
     "accelerate",
     "trl",
     "peft",
@@ -51,8 +49,31 @@ dependencies = [
     "tokenizers",
     "huggingface-hub",
     "sentencepiece",
+]
+# NLP・テキスト処理（spacy/scispacy系はモデルダウンロードも重い）
+nlp = [
+    "transformers",
+    "datasets",
+    "lxml",
+    "cython",
+    "spacy",
+    "fast-langdetect",
+    "scispacy",
+]
+# 勾配ブースティング系
+gbdt = [
+    "lightgbm",
+    "xgboost",
+]
+# 大規模データ・分散処理・LLM推論サーバ
+serving = [
+    "dask",
+    "fastparquet",
+    "elasticsearch>=8.0.0,<9.0.0",
     "vllm>=0.22.0",
-    "matplotlib-venn>=1.1.2",
+]
+dev = [
+    "pytest",
 ]
 
 

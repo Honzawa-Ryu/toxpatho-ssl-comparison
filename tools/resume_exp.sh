@@ -25,61 +25,23 @@ SUFFIX=${2:-resumed}
 
 PROJECT_ROOT=$(git rev-parse --show-toplevel)
 
+source "${PROJECT_ROOT}/scripts/exp_common.sh"
+
 EXP_ROOT="${PROJECT_ROOT}/experiments"
 OUT_ROOT="${PROJECT_ROOT}/outputs"
-
-# =========================================================
-# Helper: resolve experiment dir from ID or name
-# =========================================================
-
-_resolve_exp() {
-    local input="$1"
-
-    # Numeric → pad and find by ID
-    if [[ "$input" =~ ^[0-9]+$ ]]; then
-        local padded
-        padded=$(printf "%04d" "$input")
-
-        find "${EXP_ROOT}" \
-            -mindepth 1 \
-            -maxdepth 1 \
-            -type d \
-            -name "${padded}_*" \
-        | head -n1
-    else
-        echo "${EXP_ROOT}/${input}"
-    fi
-}
-
-_latest_exp() {
-    find "${EXP_ROOT}" \
-        -mindepth 1 \
-        -maxdepth 1 \
-        -type d \
-        ! -name latest \
-        -printf "%f\n" 2>/dev/null \
-    | grep -E '^[0-9]{4}_' \
-    | sort -t '_' -k1,1n \
-    | tail -n1
-}
 
 # =========================================================
 # Resolve source experiment
 # =========================================================
 
-if [ -z "$INPUT" ]; then
-    SRC_EXP=$(_latest_exp)
+SRC_EXP_DIR=$(exp_resolve_dir "${EXP_ROOT}" "${INPUT}")
 
-    if [ -z "${SRC_EXP:-}" ]; then
-        echo "❌ No experiments found."
-        exit 1
-    fi
-
-    SRC_EXP_DIR="${EXP_ROOT}/${SRC_EXP}"
-else
-    SRC_EXP_DIR=$(_resolve_exp "$INPUT")
-    SRC_EXP=$(basename "${SRC_EXP_DIR}")
+if [ -z "${SRC_EXP_DIR}" ]; then
+    echo "❌ No experiments found."
+    exit 1
 fi
+
+SRC_EXP=$(basename "${SRC_EXP_DIR}")
 
 SRC_OUT_DIR="${OUT_ROOT}/${SRC_EXP}"
 
@@ -97,26 +59,7 @@ fi
 # Generate new experiment ID
 # =========================================================
 
-LAST_ID=$(
-    find "${EXP_ROOT}" \
-        -mindepth 1 \
-        -maxdepth 1 \
-        -type d \
-        ! -name latest \
-        -printf "%f\n" 2>/dev/null \
-    | grep -E '^[0-9]{4}_' \
-    | cut -d_ -f1 \
-    | sort -n \
-    | tail -n1
-)
-
-if [ -z "${LAST_ID:-}" ]; then
-    NEXT_ID=1
-else
-    NEXT_ID=$((10#$LAST_ID + 1))
-fi
-
-NEW_ID=$(printf "%04d" "${NEXT_ID}")
+NEW_ID=$(exp_next_id "${EXP_ROOT}")
 
 # =========================================================
 # Parse source experiment name

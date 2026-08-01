@@ -1,9 +1,10 @@
 #!/bin/bash
+set -euo pipefail
 
 touch .env
-mkdir ./logs
-mkdir ./notebooks
-mkdir ./data
-mkdir ./outputs
-mkdir ./libraries
-mkdir ./experiments
+mkdir -p ./logs
+mkdir -p ./notebooks
+mkdir -p ./data
+mkdir -p ./outputs
+mkdir -p ./libraries
+mkdir -p ./experiments
