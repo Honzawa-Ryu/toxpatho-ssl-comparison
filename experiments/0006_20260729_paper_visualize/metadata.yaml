@@ -1,6 +1,0 @@
-exp_id: 0006
-exp_name: 0006_20260729_paper_visualize
-created_date: 20260729
-git_commit: 3881315447b3be1779f8eea9af7a6adbd48759c6
-partition: x-large-andre01
-migrated_from: scripts/analysis/run_analysis_paper_slurm.sh

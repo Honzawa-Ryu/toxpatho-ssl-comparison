@@ -1,9 +1,0 @@
-# ============================================================
-# paper 版（ViT-B/16 5手法）の埋め込み抽出
-# ============================================================
-
-analysis:
-  methods_config: "scripts/analysis/methods_paper.yaml"
-  data_subdir: "shards"
-  n_patches: 2000
-  batch_size: 256

@@ -1,8 +1,0 @@
-# ============================================================
-# paper 版の学習曲線・collapse監視・スライド着色 t-SNE
-# ============================================================
-
-analysis:
-  methods_config: "scripts/analysis/methods_paper.yaml"
-  input_exp: "0003_20260729_paper_extract_embeddings"
-  n_patches: 2000

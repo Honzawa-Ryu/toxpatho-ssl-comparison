@@ -1,0 +1,32 @@
+# ============================================================
+# 表現比較（paper 版, ViT-B/16 統一）の手法 -> チェックポイント対応表
+#
+# `lib/analysis/embeddings.py: run()` が読む methods_config。
+# 主比較は Goal.yaml 方針1により非対照学習4手法（Barlow Twins/SimSiam/MAE/DINO）
+# に限定する。SwAV（対照学習寄り）は主比較から除外するため、ここには含めない
+# （学習・チェックポイント自体は 20260714_paper_swav_vitb16 として残置、参考用途）。
+#
+# checkpoint パスは各 20260714_paper_*/run_slurm.sh の
+# PROJECT_ROOT=/workspace/andre01/honzawa/wsi-ad と一致させてある。
+# ============================================================
+
+methods:
+  - name: barlowtwins
+    ssl_name: barlowtwins
+    model_name: ViTB16
+    model_path: /workspace/andre01/honzawa/wsi-ad/outputs/20260714_paper_barlowtwins_vitb16/model_ssl.pt
+
+  - name: dino
+    ssl_name: dino
+    model_name: ViTB16
+    model_path: /workspace/andre01/honzawa/wsi-ad/outputs/20260714_paper_dino_vitb16/model_ssl.pt
+
+  - name: mae
+    ssl_name: mae
+    model_name: ViTB16
+    model_path: /workspace/andre01/honzawa/wsi-ad/outputs/20260714_paper_mae_vitb16/model_ssl.pt
+
+  - name: simsiam
+    ssl_name: simsiam
+    model_name: ViTB16
+    model_path: /workspace/andre01/honzawa/wsi-ad/outputs/20260714_paper_simsiam_vitb16/model_ssl.pt

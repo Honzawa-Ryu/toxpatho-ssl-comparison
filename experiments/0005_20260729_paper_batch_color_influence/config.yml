@@ -1,8 +1,0 @@
-# ============================================================
-# paper 版のバッチ/色影響の定量
-# ============================================================
-
-analysis:
-  methods_config: "scripts/analysis/methods_paper.yaml"
-  input_exp: "0003_20260729_paper_extract_embeddings"
-  k: 10

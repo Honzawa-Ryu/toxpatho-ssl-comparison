@@ -232,3 +232,5 @@ experiments/*/uncommitted_changes.diff
 # agentrun capsule
 .agent-runs/
 .agentrun.lock
+experiments/before_refactor/*
+__pycache__/
