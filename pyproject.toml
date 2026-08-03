@@ -32,6 +32,10 @@ dependencies = [
     "python-dotenv",
     "matplotlib-venn>=1.1.2",
     "h5py>=3.16.0",
+    # WSI(.svs等)読み込み。openslide-bin がネイティブライブラリを同梱するため、
+    # コンテナ(env.sif)側にlibopenslideが無くても uv sync だけで動く。
+    "openslide-python>=1.3.1",
+    "openslide-bin",
 ]
 
 [project.optional-dependencies]
