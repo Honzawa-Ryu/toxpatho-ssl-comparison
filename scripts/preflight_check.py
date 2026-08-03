@@ -25,7 +25,7 @@ def check_config_experiment_match(exp_path: Path):
     config_keys = set(re.findall(r"^([a-zA-Z_][a-zA-Z0-9_]*):", config_content, re.MULTILINE))
     
     # Find config references in Python
-    exp_refs = set(re.findall(r"config(?:(?:\.get\(['\"]|\[['\"])([a-zA-Z_][a-zA-Z0-9_]*)['\"]", exp_content))
+    exp_refs = set(re.findall(r"config(?:(?:\.get\(['\"]|\[['\"])([a-zA-Z_][a-zA-Z0-9_]*)['\"])", exp_content))
 
     # 1. Undefined references
     undefined = exp_refs - config_keys

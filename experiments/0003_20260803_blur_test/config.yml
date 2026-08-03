@@ -1,0 +1,17 @@
+# ============================================================
+# Experiment Configuration
+# ============================================================
+# - Fixed hyperparameters go here.
+# - Variable dimensions (model, seed, prompt, ...) go in run_slurm.sh GRID_ARGS.
+# - Do NOT hardcode values you intend to sweep.
+# ============================================================
+
+# --- Hyperparameters ---
+seed: 42
+
+# --- Blur score (動作確認用: 1枚のみ) ---
+blur:
+  wsi_dir: data/raw_slide
+  coords_dir: data/trident_processed/20x_224px_0px_overlap/patches
+  patch_size: 224
+  wsi_ids: ["10306"]
