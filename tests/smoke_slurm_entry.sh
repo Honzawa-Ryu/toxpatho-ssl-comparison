@@ -52,6 +52,23 @@ exec bash -c "${script}"
 STUB
     chmod +x "${root}/bin/apptainer"
 
+    # rsync はこの smoke test 環境に無いことがあるため、`rsync -a SRC DST` の
+    # trailing-slash 有無（内容コピー/サブディレクトリごとコピー）だけを
+    # 再現する最小スタブで代用する。
+    cat > "${root}/bin/rsync" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+src="${@: -2:1}"
+dst="${@: -1}"
+mkdir -p "${dst}"
+if [[ "${src}" == */ ]]; then
+    cp -a "${src}." "${dst}"
+else
+    cp -a "${src}" "${dst}"
+fi
+STUB
+    chmod +x "${root}/bin/rsync"
+
     echo '# stub venv activate (smoke test)' > "${root}/.venv/bin/activate"
 
     {
@@ -187,6 +204,72 @@ else
     else
         _fail "SIF_PATH に触れないメッセージで落ちた: ${OUT}"
     fi
+fi
+rm -rf "${ROOT}"
+
+# =====================================================
+# 6. USE_LOCAL_SSD_INPUT=1 + DATA_SUBDIRS: 指定したサブディレクトリだけが
+#    scratch へコピーされ、data/ 全体はコピーされないこと
+# =====================================================
+
+echo "▶ USE_LOCAL_SSD_INPUT=1 with DATA_SUBDIRS (scoped copy)"
+ROOT=$(_make_project smoke_subdirs sbatch)
+mkdir -p "${ROOT}/data/keep" "${ROOT}/data/skip"
+echo keep > "${ROOT}/data/keep/file.txt"
+echo skip > "${ROOT}/data/skip/file.txt"
+
+if OUT=$(env -i \
+    HOME="${HOME}" \
+    USER="${USER:-smoke}" \
+    PATH="${ROOT}/bin:/usr/local/bin:/usr/bin:/bin" \
+    PROJECT_ROOT="${ROOT}" \
+    EXP_NAME="smoke_subdirs" \
+    SCRATCH_ROOT="${ROOT}/scratch" \
+    RUN_COMMAND='echo SMOKE_BODY_EXECUTED' \
+    USE_LOCAL_SSD_INPUT=1 \
+    SIF_PATH=/nonexistent/dummy.sif \
+    bash -c 'DATA_SUBDIRS=("keep"); source "${PROJECT_ROOT}/scripts/slurm_entry.sh"' 2>&1); then
+
+    SCRATCH_DATA=$(find "${ROOT}/scratch" -maxdepth 3 -type d -name data | head -n1)
+
+    if [ -f "${SCRATCH_DATA}/keep/file.txt" ]; then
+        _ok "指定したサブディレクトリ(keep)はコピーされた"
+    else
+        _fail "keep がコピーされていない: ${OUT}"
+    fi
+
+    if [ ! -e "${SCRATCH_DATA}/skip" ]; then
+        _ok "指定していないサブディレクトリ(skip)はコピーされなかった"
+    else
+        _fail "DATA_SUBDIRS を無視して skip までコピーしてしまった"
+    fi
+else
+    _fail "DATA_SUBDIRS 指定ありでジョブが落ちた: ${OUT}"
+fi
+rm -rf "${ROOT}"
+
+# =====================================================
+# 7. USE_LOCAL_SSD_INPUT=1 かつ DATA_SUBDIRS 未指定: 後方互換で
+#    data/ 全体がコピーされること
+# =====================================================
+
+echo "▶ USE_LOCAL_SSD_INPUT=1 without DATA_SUBDIRS (whole-dir fallback)"
+ROOT=$(_make_project smoke_wholedir sbatch)
+mkdir -p "${ROOT}/data/keep" "${ROOT}/data/skip"
+echo keep > "${ROOT}/data/keep/file.txt"
+echo skip > "${ROOT}/data/skip/file.txt"
+
+if OUT=$(_run_entry "${ROOT}" smoke_wholedir SIF_PATH=/nonexistent/dummy.sif USE_LOCAL_SSD_INPUT=1 2>&1); then
+
+    SCRATCH_DATA=$(find "${ROOT}/scratch" -maxdepth 3 -type d -name data | head -n1)
+
+    if [ -f "${SCRATCH_DATA}/keep/file.txt" ] && [ -f "${SCRATCH_DATA}/skip/file.txt" ]; then
+        _ok "DATA_SUBDIRS 未指定時は data/ 全体がコピーされた（後方互換）"
+    else
+        _fail "DATA_SUBDIRS 未指定時の全体コピーが期待通りでない: ${OUT}"
+    fi
+else
+    _fail "DATA_SUBDIRS 未指定・全体コピーでジョブが落ちた: ${OUT}"
 fi
 rm -rf "${ROOT}"
 

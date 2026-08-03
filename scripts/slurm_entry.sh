@@ -506,15 +506,33 @@ mkdir -p "${SCRATCH_DIR}"
 
 # =====================================================
 # Input
+#
+# DATA_SUBDIRS が1つ以上設定されていれば、data/ 全体ではなく列挙された
+# サブディレクトリだけを転送する（無駄な転送を避けるため、run_slurm.sh 側で
+# 実験に必要な最小限のパスを指定することを推奨）。DATA_SUBDIRS が空の場合は
+# 従来通り data/ 全体をコピーする（後方互換）。
 # =====================================================
 
 if [ "${USE_LOCAL_SSD_INPUT:-0}" -eq 1 ]; then
 
     mkdir -p "${SCRATCH_DIR}/data"
 
-    rsync -a \
-        "${PROJECT_ROOT}/data/" \
-        "${SCRATCH_DIR}/data/"
+    if [[ -v DATA_SUBDIRS && "${#DATA_SUBDIRS[@]}" -gt 0 ]]; then
+
+        for sub in "${DATA_SUBDIRS[@]}"; do
+            mkdir -p "${SCRATCH_DIR}/data/$(dirname "${sub}")"
+            rsync -a \
+                "${PROJECT_ROOT}/data/${sub}" \
+                "${SCRATCH_DIR}/data/$(dirname "${sub}")/"
+        done
+
+    else
+
+        rsync -a \
+            "${PROJECT_ROOT}/data/" \
+            "${SCRATCH_DIR}/data/"
+
+    fi
 
     export DATASET_DIR="${SCRATCH_DIR}/data"
 
