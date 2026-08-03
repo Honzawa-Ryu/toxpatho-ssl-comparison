@@ -126,7 +126,15 @@ def main() -> None:
     WSI_EXTENSIONS = {".svs", ".ndpi", ".tiff", ".tif", ".vms", ".vmu", ".scn", ".mrxs", ".bif"}
 
     blur_params = config.get("blur", {})
-    wsi_dir = project_root / blur_params["wsi_dir"]
+    # wsi_dir: 読み取り専用の生スライド入力。USE_LOCAL_SSD_INPUT=1 + DATA_SUBDIRS で
+    # data/raw_slide を scratch にコピーした場合、dataset_dir 経由でそちらを読む
+    # （dataset_dir.parent は USE_LOCAL_SSD_INPUT=0 なら project_root と同じ値になる
+    # ので、無効時の挙動は変わらない）。
+    wsi_dir = dataset_dir.parent / blur_params["wsi_dir"]
+    # coords_dir: append_blur_scores_from_wsi がこの下のh5に直接スコアを追記する
+    # "その場書き換え" 対象なので、常に project_root（NFS）を指す。DATASET_DIR
+    # 経由にすると、scratch 側に書いた追記結果が NFS へ同期されず消える
+    # （scripts/slurm_entry.sh が起動時に同期するのは OUTPUT_DIR のみ）。
     coords_dir = project_root / blur_params["coords_dir"]
     patch_size = int(blur_params["patch_size"])
     wsi_ids = blur_params.get("wsi_ids")

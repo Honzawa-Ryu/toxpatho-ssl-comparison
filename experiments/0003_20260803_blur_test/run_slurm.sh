@@ -33,8 +33,12 @@ export EXP_NAME="0003_20260803_blur_test"
 # =====================================================
 # Storage
 # /workspace はNFS（遅い）、/scratch はノード付属のm.2 SSD（速い）。
-# デフォルトで有効。NFS越しに直接読み書きしたい場合のみ0にする
-# （例: 出力を実行中にリアルタイムで/workspace側から監視したい等）。
+#
+# USE_LOCAL_SSD_INPUT はデフォルト0（NFSを直読み）。data/ 全体をコピーすると
+# 実験に不要なデータまで毎回転送して起動が遅くなるため、有効化する場合は
+# 必ず DATA_SUBDIRS で実際に読むサブディレクトリだけを列挙すること。
+# 有効化した場合、実験コード（experiment.py）側は project_root ではなく
+# 環境変数 DATASET_DIR 経由でデータを読むこと（でないとコピーが無駄になる）。
 #
 # ⚠️ /scratch 側（SCRATCH_DIR）はジョブ終了時に自動削除されない
 #    （rm -rf の誤削除リスクを避けるため）。出力は自動で /workspace/outputs/
@@ -42,8 +46,19 @@ export EXP_NAME="0003_20260803_blur_test"
 #    slurm.out に出る警告に従って手動で消すこと（詳細はUSAGE.md 3-2節）。
 # =====================================================
 
-USE_LOCAL_SSD_INPUT=1
+USE_LOCAL_SSD_INPUT=0
 USE_LOCAL_SSD_OUTPUT=1
+
+# USE_LOCAL_SSD_INPUT=1 にする場合のみ、コピー対象を列挙する
+# （data/ からの相対パス。空のままだと data/ 全体をコピーする後方互換動作になる）。
+# この実験では raw_slide のみが読み取り専用入力。trident_processed 配下の
+# coords h5 は experiment.py がその場で追記書き込みする対象なので、
+# ここに含めないこと（scratch に書いた追記結果が NFS へ戻らず消える）。
+# 例:
+# DATA_SUBDIRS=(
+#     "raw_slide"
+# )
+DATA_SUBDIRS=()
 
 # =====================================================
 # python path
