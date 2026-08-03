@@ -358,7 +358,8 @@ partition・GPU/CPU/mem/time・time-limit警告用のsignal margin・array/seq�
    `logs/{exp_name}/latest` symlinkを更新
 3. `RUN_MODE`（single/array/seq）に応じて `GRID_ARGS`/`GRID_VALUES` から `CONFIGS` を展開
 4. 実行コマンドを `logs/{exp_name}/{job_id}/command.sh` に保存
-5. （`USE_LOCAL_SSD_INPUT=1`の場合）`data/` をノード付属SSDの `SCRATCH_DIR/data/` へ
+5. （`USE_LOCAL_SSD_INPUT=1`の場合）`DATA_SUBDIRS`で指定したサブディレクトリのみ
+   （未指定なら`data/`全体）をノード付属SSDの `SCRATCH_DIR/data/` へ
    rsyncし、`DATASET_DIR` をそちらに向ける
 6. `apptainer exec`（`--nv` でGPU有効化）でコンテナ内、`.venv` を activate した状態で実行
    （`USE_LOCAL_SSD_OUTPUT=1`の場合、`experiment.py`は`OUTPUT_ROOT`
@@ -379,9 +380,15 @@ partition・GPU/CPU/mem/time・time-limit警告用のsignal margin・array/seq�
 出力の回収は中断時にも行われます）。scratchの手動クリーンアップが必要な場合は
 `slurm.out`の警告を確認してください。
 
-`USE_LOCAL_SSD_INPUT`/`USE_LOCAL_SSD_OUTPUT`は`run_slurm.sh`の「Storage」節で
-デフォルト有効（`1`）になっています。`/workspace`側からリアルタイムに出力を監視したい
-等の理由でNFSへ直接読み書きしたい場合のみ、個別に`0`にしてください。
+`USE_LOCAL_SSD_OUTPUT`は`run_slurm.sh`の「Storage」節でデフォルト有効（`1`）です。
+`USE_LOCAL_SSD_INPUT`はデフォルト無効（`0`、NFSを直読み）です。`data/`全体をノード
+ローカルSSDへコピーすると、実験に不要なデータまで毎回転送して起動が遅くなるため、
+有効化する場合は必ず同じ節の`DATA_SUBDIRS`で実際に読むサブディレクトリだけを
+列挙してください（未指定のまま`USE_LOCAL_SSD_INPUT=1`にすると`data/`全体をコピーする
+後方互換動作になります）。また、有効化した場合は実験コード側が`project_root`ではなく
+環境変数`DATASET_DIR`経由でデータを読むようになっていないと、コピー自体が無駄になる
+点に注意してください（`0002_20260803_data_preprocess`・`0003_20260803_blur_test`は
+現状`project_root`直読みのため、`USE_LOCAL_SSD_INPUT`を有効にする効果がありません）。
 
 ### 3-3. ログの見方
 
