@@ -91,6 +91,18 @@ wsi id = 無料のバッチラベル。成功＝η²_slideを偶然(≈0.07)へ�
       → 意味ARI・A/B/C近接、及び「バッチ除去後も生物差が残るか」の評価に使う
 - [ ] or 外部ラベル付きH&E（NCT-CRC-HE-100K 等）で転移プローブ
 
+## F. マルチGPU/スパコン移行（`docs/multi_gpu_migration.md`、2026-08-04時点）
+- [x] 優先順位1〜3（`lib/trainer/distributed.py`実装／`data.py`のrank分割／
+      Barlow Twins・SwAV・DINOのgather/all_reduce有効化）: 実装済み・レビュー済み
+      （PROJECT_STATUS.md セッション7参照）。単一GPU後方互換は静的レビューで確認、
+      **実GPUでの動作確認は未実施**。
+- [ ] 優先順位4: `templates/run_slurm.sh` / `scripts/slurm_entry.sh` を
+      `torchrun --standalone --nproc_per_node=N`（1ノード内マルチGPU）対応にする。
+      GPUなしcapsuleでは検証不能なため、実GPUが使えるセッションで着手すること。
+- [ ] 優先順位5: マルチノード対応（PBS/Slurm双方のrendezvous、srun配下のコンテナ起動）
+- [ ] 項目1〜3のsmoke test（`torchrun --nproc_per_node=2`でBarlow Twins等を数epoch回し、
+      崩壊なし・checkpoint重複書き込みなし・wandb run重複なしを確認）
+
 ## E. レポート / 発信
 - [ ] Artifactレポートに「バッチ / 色の影響」章を追記（白黒・単一スライド・CKA多vs単の対比図）
 - [ ] 本比較（4手法）の最終レポート

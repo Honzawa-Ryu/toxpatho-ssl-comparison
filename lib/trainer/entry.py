@@ -88,6 +88,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument('--bt_lambda', type=float, default=0.0)        # Barlow Twins: off-diagonal loss weight (paper: 5e-3); 0 = class default
     parser.add_argument('--fix_pred_lr', action='store_true')          # SimSiam: keep predictor LR constant (not decayed)
     parser.add_argument('--diagnose_only', action='store_true')        # run the GPU-bound throughput probe and exit without training
+    # --- multi-GPU / DDP knobs (docs/multi_gpu_migration.md, Goal.yaml 2026-08-03) ---
+    parser.add_argument('--ddp_linear_scale_lr', action='store_true')  # multiply --lr by world_size (linear scaling rule). Default off: batch/LR redesign per method should be a deliberate per-experiment choice, not automatic.
     return parser
 
 
@@ -102,9 +104,10 @@ def run_from_args(args, filename: str = 'train_tggate') -> None:
 def main(ctx: RunContext):
     """エントリポイント。分散のセットアップ/破棄で実処理を挟む。
 
-    シングルGPUでは distributed.* はすべて no-op。複数GPU化の際の変更点を
-    lib/trainer/distributed.py に閉じ込めるため、今のうちから呼び出しを通しておく
-    （REFACTOR_PLAN.md §6-4）。
+    `RANK`/`WORLD_SIZE` 等が未設定の単一プロセス実行では distributed.* は
+    すべて no-op（従来通りのシングルGPU実行）。`torchrun` 等でこれらの環境変数が
+    設定された場合のみ、実際に init_process_group / DDP が有効になる
+    （lib/trainer/distributed.py、docs/multi_gpu_migration.md 参照）。
     """
     distributed.setup()
     try:
@@ -118,17 +121,22 @@ def _run(ctx: RunContext):
     torch.backends.cudnn.benchmark = True
     torch.backends.cuda.matmul.allow_tf32 = True   # faster fp32 matmuls (norms/loss); bf16 autocast unaffected
     torch.backends.cudnn.allow_tf32 = True
-    run = wandb.init(project="tox-patho-tggate",
-                     entity="benzelongji-the-university-of-tokyo",
-                     name=f"{args.note}_{args.ssl_name}_{args.model_name}_lr{args.lr}_epoch{args.num_epoch}_patience{args.patience}_delta{args.delta}_freeze{args.freeze_backbone}",
-                     config=args.__dict__)
+    # rank0ガード: 複数プロセスから wandb.init すると重複runが作られるため
+    # rank0のみ初期化する（Goal.yaml 2026-08-03 / docs/multi_gpu_migration.md §1）。
+    # 単一プロセス実行では distributed.is_main_process() は常に True で従来と同じ。
+    run = None
+    if distributed.is_main_process():
+        run = wandb.init(project="tox-patho-tggate",
+                         entity="benzelongji-the-university-of-tokyo",
+                         name=f"{args.note}_{args.ssl_name}_{args.model_name}_lr{args.lr}_epoch{args.num_epoch}_patience{args.patience}_delta{args.delta}_freeze{args.freeze_backbone}",
+                         config=args.__dict__)
     # 1. Self-Supervised Learning
     model, criterion, optimizer, scheduler, early_stopping = prepare_model(
         ctx,
         model_name=args.model_name, patience=args.patience, delta=args.delta, lr=args.lr, weight_decay=args.weight_decay, num_epoch=args.num_epoch, freeze_backbone=args.freeze_backbone,
         layer_wise_lr=args.layer_wise_lr, backbone_lr_ratio=args.backbone_lr_ratio
     )
-    model = distributed.wrap(model)  # no-op。将来 DDP ラップが入る場所
+    model = distributed.wrap(model)  # 単一プロセス実行ではno-op。world_size>1ならSyncBN化+DDPラップ
     if args.diagnose_only:
         # スループット診断のみ実行して終了（学習には進まない）
         diagnose_gpu_bound(ctx, model, criterion, optimizer, batch_size=args.batch_size)
@@ -142,7 +150,9 @@ def _run(ctx: RunContext):
     state_path = f'{DIR_NAME}/state.pt'
     if args.resume and os.path.exists(state_path):
         state = torch.load(state_path, map_location=DEVICE, weights_only=False)  # state.pt holds criterion/early_stopping objects
-        model.load_state_dict(state['model_state_dict'])
+        # state.pt は常に unwrap 済み(非DDP)のstate_dictで保存される(loop.py)ため、
+        # DDPラップ後のmodelへ読む場合も .module 側にロードする必要がある。
+        distributed.unwrap(model).load_state_dict(state['model_state_dict'])
         optimizer.load_state_dict(state['optimizer_state_dict'])
         try:
             scheduler.load_state_dict(state['scheduler_state_dict'])
@@ -163,19 +173,23 @@ def _run(ctx: RunContext):
         ctx, model, criterion, optimizer, scheduler, early_stopping, num_epoch=args.num_epoch, run=run,
         start_epoch=start_epoch, train_loss=train_loss_init
     )
+    distributed.barrier()  # 全rankが学習ループを終えてから rank0 の書き出しへ進む
     if flag_finish:
-        sslmodel.plot.plot_progress_train(train_loss, DIR_NAME)
-        sslmodel.utils.summarize_model(
-            model,
-            None,
-            DIR_NAME, lst_name=['summary_ssl.txt', 'model_ssl.pt']
-        )
-        # 2. save results & config
-        LOGGER.to_logger(name='argument', obj=args)
-        LOGGER.to_logger(name='loss', obj=criterion)
-        LOGGER.to_logger(
-            name='optimizer', obj=optimizer, skip_keys={'state', 'param_groups'}
-        )
-        LOGGER.to_logger(name='scheduler', obj=scheduler)
+        # 最終成果物の書き出しはrank0限定（複数プロセスが同じファイルへ競合書き込みするのを防ぐ）。
+        if distributed.is_main_process():
+            sslmodel.plot.plot_progress_train(train_loss, DIR_NAME)
+            sslmodel.utils.summarize_model(
+                distributed.unwrap(model),
+                None,
+                DIR_NAME, lst_name=['summary_ssl.txt', 'model_ssl.pt']
+            )
+            # 2. save results & config
+            LOGGER.to_logger(name='argument', obj=args)
+            LOGGER.to_logger(name='loss', obj=criterion)
+            LOGGER.to_logger(
+                name='optimizer', obj=optimizer, skip_keys={'state', 'param_groups'}
+            )
+            LOGGER.to_logger(name='scheduler', obj=scheduler)
     else:
         LOGGER.logger.info('reached max epoch / train')
+    distributed.barrier()  # rank0の書き出し完了を他rankが待ってからteardown()へ進む

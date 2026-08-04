@@ -12,6 +12,7 @@ import torchvision
 
 import lib.sslmodel as sslmodel
 from lib.sslmodel.models import barlowtwins, simsiam, byol, swav, linearhead, simclr, mae, dino
+from lib.trainer import distributed
 
 class BarlowTwins:
     def __init__(self, DEVICE="cpu"):
@@ -19,7 +20,9 @@ class BarlowTwins:
 
     def prepare_model(self, backbone, head_size:int=512, pred_dim=128, projection_dim=512):
         model = barlowtwins.BarlowTwins(backbone, head_size=[head_size, projection_dim, pred_dim])
-        criterion = barlowtwins.BarlowTwinsLoss()
+        # マルチGPU時はcross-correlation行列をGPU間でall_reduceする(有効バッチサイズを
+        # 正しく増やすために必須。Goal.yaml 2026-08-03)。単一GPUではFalseのまま=従来通り。
+        criterion = barlowtwins.BarlowTwinsLoss(gather_distributed=distributed.world_size() > 1)
         model.to(self.DEVICE)
         return model, criterion
 
@@ -115,7 +118,10 @@ class SwaV:
             backbone, head_size=[head_size, 512, 128],
             n_prototypes=n_prototypes,
         )
-        criterion = swav.SwaVLoss()
+        # マルチGPU時はSinkhorn-KnoppをGPU間でall_reduce/all_gatherする
+        # (プロトタイプ割当がバッチ全体の分布に依存するため。Goal.yaml 2026-08-03)。
+        # 単一GPUではFalseのまま=従来通り。
+        criterion = swav.SwaVLoss(sinkhorn_gather_distributed=distributed.world_size() > 1)
         model.to(self.DEVICE)
         return model, criterion
 

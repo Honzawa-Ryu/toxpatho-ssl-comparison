@@ -11,6 +11,7 @@ https://docs.lightly.ai/self-supervised-learning/examples/swav.html
 """
 import torch
 import torch.nn as nn
+import torch.distributed as dist
 from typing import List, Tuple, Union, Optional
 
 class ProjectionHead(nn.Module):
@@ -152,15 +153,19 @@ def sinkhorn(
         Soft codes Q assigning each feature to a prototype.
     
     """
+    # Goal.yaml 2026-08-03 / docs/multi_gpu_migration.md §2: マルチGPU時に
+    # 有効化しないとプロトタイプ割当(Q)がローカルバッチの分布だけで決まり、
+    # SwAVが前提とする「バッチ全体の分布に対する均等割当」が崩れて崩壊しやすくなる。
+    # gather_distributed=Falseの単一GPU実行では従来通り world_size=1 のno-op。
     world_size = 1
-    #if gather_distributed and dist.is_initialized():
-    #    world_size = dist.get_world_size()
+    if gather_distributed and dist.is_available() and dist.is_initialized():
+        world_size = dist.get_world_size()
 
     # get the exponential matrix and make it sum to 1
     Q = torch.exp(out / epsilon).t()
     sum_Q = torch.sum(Q)
-    #if world_size > 1:
-    #    dist.all_reduce(sum_Q)
+    if world_size > 1:
+        dist.all_reduce(sum_Q)
     Q /= sum_Q
 
     B = Q.shape[1] * world_size
@@ -168,8 +173,8 @@ def sinkhorn(
     for _ in range(iterations):
         # normalize rows
         sum_of_rows = torch.sum(Q, dim=1, keepdim=True)
-        #if world_size > 1:
-        #    dist.all_reduce(sum_of_rows)
+        if world_size > 1:
+            dist.all_reduce(sum_of_rows)
         Q /= sum_of_rows
         # normalize columns
         Q /= torch.sum(Q, dim=0, keepdim=True)

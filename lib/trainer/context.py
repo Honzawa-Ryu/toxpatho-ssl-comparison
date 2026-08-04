@@ -17,6 +17,7 @@ import torch
 
 import lib.sslmodel as sslmodel
 import lib.model.zoo as zoo
+from lib.trainer import distributed
 
 
 @dataclass
@@ -68,26 +69,44 @@ def build_context(args, filename: str = 'train_tggate') -> RunContext:
     # os.path.join を使う（第2引数以降が絶対パスならそれ以前を捨てる仕様）。
     #   絶対パス -> そのまま {OUTPUT_DIR}
     #   相対パス -> 従来通り {project_path}/result/{dir_result}
+    # マルチGPU時のLR: linear scaling rule (lr *= world_size) は既定では適用しない。
+    # Goal.yaml 2026-08-03 の通り「単純なLR再スケーリングだけでは不十分な場合がある」ため、
+    # 有効化するかどうかは実験ごとに --ddp_linear_scale_lr で明示的に選ぶ
+    # （デフォルトOFF = 単一GPU実行時と完全に同じ lr のまま）。
+    world_size = distributed.world_size()
+    if getattr(args, 'ddp_linear_scale_lr', False) and world_size > 1:
+        args.lr = args.lr * world_size
+
     dir_name = os.path.join(project_path, 'result', args.dir_result) # for output
     file_log = f'{dir_name}/logger.pkl'
-    if not os.path.exists(dir_name):
-        os.makedirs(dir_name)
+    os.makedirs(dir_name, exist_ok=True)  # exist_ok: 複数rankが同時に作成しても競合しない
     now = datetime.datetime.now().strftime('%H%M%S')
+    # マルチGPU時、全rankがほぼ同時に同じ秒のtagでlog_{tag}.txtへ書くと衝突するため、
+    # rank0以外はtagにrank番号を足して別ファイルにする（rank0のファイル名は単一GPU実行時と
+    # 完全に同じ = 後方互換）。
+    if not distributed.is_main_process():
+        now = f'{now}_rank{distributed.rank()}'
     logger = sslmodel.utils.logger_save()
     logger.init_logger(filename, dir_name, now, level_console='debug')
 
     # 実行条件（引数）を JSON ファイルに保存し、ログ（標準出力）にもダンプする
-    config_json_path = os.path.join(dir_name, 'config.json')
-    try:
-        with open(config_json_path, 'w') as f:
-            json.dump(vars(args), f, indent=4, ensure_ascii=False)
-        logger.logger.info(f"Saved run configuration to {config_json_path}")
-    except Exception as e:
-        logger.logger.warning(f"Failed to save run configuration: {e}")
+    # （config.json はrank0のみが書く。全rankが書くと同一ファイルへの競合書き込みになる）
+    if distributed.is_main_process():
+        config_json_path = os.path.join(dir_name, 'config.json')
+        try:
+            with open(config_json_path, 'w') as f:
+                json.dump(vars(args), f, indent=4, ensure_ascii=False)
+            logger.logger.info(f"Saved run configuration to {config_json_path}")
+        except Exception as e:
+            logger.logger.warning(f"Failed to save run configuration: {e}")
 
     logger.logger.info(f"Execution Arguments:\n{json.dumps(vars(args), indent=4)}")
+    if getattr(args, 'ddp_linear_scale_lr', False) and world_size > 1:
+        logger.logger.info(f"--ddp_linear_scale_lr: lr scaled by world_size={world_size} -> {args.lr}")
 
-    device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu') # get device
+    # マルチGPU時は各プロセスを自分の LOCAL_RANK の GPU に固定する（さもないと
+    # 全プロセスが GPU0 を奪い合う。Goal.yaml 2026-08-03 / docs/multi_gpu_migration.md §1）。
+    device = torch.device(f'cuda:{distributed.local_rank()}' if torch.cuda.is_available() else 'cpu') # get device
     # Set SSL class
     ssl_class = zoo.DICT_SSL[args.ssl_name](DEVICE=device)
     # multicrop config (read by SwaV/DINO prepare_transform + prepare_model)

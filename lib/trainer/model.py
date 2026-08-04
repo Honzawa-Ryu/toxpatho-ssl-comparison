@@ -2,7 +2,9 @@
 """
 # モデル・損失・スケジューラの構築
 
-分散学習に移行する際は、ここで DDP ラップを行う（REFACTOR_PLAN.md §6-4）。
+DDP ラップ自体は lib/trainer/entry.py の `distributed.wrap(model)` で行う。
+ここでは EarlyStopping の書き込みをrank0限定にする（`save_enabled`）等、
+分散実行時にもモデル構築ロジック自体は単一プロセス実行と同じにする。
 
 """
 import torch.nn as nn
@@ -10,6 +12,7 @@ from timm.scheduler import CosineLRScheduler
 
 import lib.sslmodel as sslmodel
 import lib.model.zoo as zoo
+from lib.trainer import distributed
 from lib.trainer.context import RunContext
 from lib.trainer.optim import build_optimizer
 
@@ -133,5 +136,8 @@ def prepare_model(
     scheduler = CosineLRScheduler(
         optimizer, t_initial=num_epoch, lr_min=args.lr_min,
         warmup_t=args.warmup_t, warmup_lr_init=args.warmup_lr_init, warmup_prefix=True)
-    early_stopping = sslmodel.utils.EarlyStopping(patience=patience, delta=delta, path=f'{ctx.dir_name}/checkpoint.pt')
+    early_stopping = sslmodel.utils.EarlyStopping(
+        patience=patience, delta=delta, path=f'{ctx.dir_name}/checkpoint.pt',
+        save_enabled=distributed.is_main_process(),
+    )
     return model, criterion, optimizer, scheduler, early_stopping

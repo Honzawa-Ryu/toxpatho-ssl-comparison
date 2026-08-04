@@ -18,6 +18,7 @@ enabled via `n_local_crops` if desired.
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import torch.distributed as dist
 
 import timm
 
@@ -95,7 +96,24 @@ class DINOLoss(nn.Module):
 
     @torch.no_grad()
     def update_center(self, teacher_output):
-        batch_center = teacher_output.mean(dim=0, keepdim=True)
+        """teacher出力のcenterをバッチ平均で更新する。
+
+        マルチGPU時、centerがローカルバッチだけで更新されるとGPU間でcenterが
+        揃わず(=各GPUが異なるcollapse防止基準で動く)、崩壊防止の効果が薄れる
+        （Goal.yaml 2026-08-03 / docs/multi_gpu_migration.md §2）。全GPUの
+        teacher出力の合計をall_reduceしてから真のglobalバッチ平均を取る。
+        単一プロセス実行（dist未初期化）では従来通りローカル平均のみ。
+        """
+        batch_center = torch.sum(teacher_output, dim=0, keepdim=True)
+        if dist.is_available() and dist.is_initialized():
+            world_size = dist.get_world_size()
+            if world_size > 1:
+                dist.all_reduce(batch_center)
+                batch_center = batch_center / (teacher_output.shape[0] * world_size)
+            else:
+                batch_center = batch_center / teacher_output.shape[0]
+        else:
+            batch_center = batch_center / teacher_output.shape[0]
         self.center = self.center * self.center_momentum + batch_center * (1 - self.center_momentum)
 
 

@@ -6,7 +6,7 @@
 # ==============================================================================
 
 project: wsi-ad
-updated: "2026-08-01"
+updated: "2026-08-03"
 mode: assist
 
 goal:
@@ -73,8 +73,44 @@ goal:
       （2026-08-01 改訂: `20260714_paper_*` の paper-faithful 設定を実態として採用。
       手法間の学習条件を無理に揃えると各手法の性能を引き出せない実装になり、
       原論文の追試として不誠実になるため）
-    - 実行環境: Slurm + Apptainer。時間のかかる学習は sbatch でジョブ投入（コンテナ内からの
-      sbatch は不可、ログインノードから投入）。基本操作は逐次確認なしで自律実行してよい。
+    - 実行環境: 手元の Slurm + Apptainer・単一GPU環境を主開発環境として維持しつつ
+      （既存の単一GPU投入は無変更で動作すること = 後方互換必須）、スパコン
+      （miyabi 等の PBS 環境）でのマルチGPU・将来的にはマルチノードDDPによる
+      並列実行にも対応する（2026-08-03 追記）。時間のかかる学習は sbatch/PBS
+      でジョブ投入（コンテナ内からの投入は不可、ログインノードから投入）。
+      基本操作は逐次確認なしで自律実行してよい。
+      移行対象の棚卸しと優先順位は `docs/multi_gpu_migration.md` を参照
+      （実装計画そのものではなく着手前メモ。着手時は別途プラン化する）:
+        1. `lib/trainer/distributed.py` の実装（init_process_group/DDP wrap）
+           ＋ rank0ガード（entry.py の wandb.init／loop.py のcheckpoint保存・ログ）
+        2. `lib/trainer/data.py`: WebDatasetシャードのrank分割
+           （`split_by_node`/`split_by_worker`）とepoch長のworld_size考慮
+        3. SSL手法別のgather/all_reduce有効化
+           （barlowtwins.py / swav.py / dino.py、下記参照）
+        4. `templates/run_slurm.sh` / `scripts/slurm_entry.sh` の
+           1ノード内マルチGPU対応（`torchrun --standalone --nproc_per_node=N`）
+        5. マルチノード対応（PBS/Slurm双方でのrendezvous・
+           `srun`/PBS相当配下でのコンテナ起動、NCCL設定）
+    - マルチGPU対応時のSSL手法別の正しさ（見落としやすい点）: GPUを増やしても
+      各手法の損失がバッチ全体の統計に依存する部分をall_reduce/all_gatherしないと
+      実効バッチサイズが増えず数学的に誤った損失になる。
+      Barlow Twinsのcross-correlation行列、SwAVのSinkhorn-Knopp反復、
+      DINOのteacher出力center更新は、いずれも現状ローカルバッチのみで計算されており
+      （実装はあるが一部コメントアウトで無効化済み）、有効化が必須。
+      加えてBatchNorm（ResNet50/DenseNet121バックボーン、各種ProjectionHead）は
+      `SyncBatchNorm` 化を検討する（ローカルバッチ統計のままだと有効バッチサイズが
+      小さいままになる）。
+    - マルチGPU化と各手法の原論文条件（バッチサイズ）の関係: 現状は単一GPU制約により
+      `20260714_paper_*` 全手法が batch_size=512 で実行されている
+      （各手法の原論文設定に対する「忠実だが小バッチ」な妥協版。例: Barlow Twinsは
+      cross-correlationがバッチ結合的なためbs512はbs2048相当のgradient
+      accumulationとは等価でない旨をコード注記済み。SwAVは本来大バッチ＋
+      feature queue前提で、bs512・queueなしは崩壊しやすい旨をコード注記済み）。
+      マルチGPU/マルチノードDDPが有効になった段階で、各手法が前提とする
+      有効バッチサイズへ近づけることを検討し、その際はLRのみでなくbatch/epoch設計
+      全体を各手法のlinear scaling ruleに従って再設計する（本ファイル既存方針
+      「原論文設定に忠実」の実効化であり、単純なLR再スケーリングだけでは
+      不十分な場合がある点に留意）。
     - MAE は構造上 ViT バックボーンを要する。手法差とバックボーン差の交絡を避けるため、
       **主比較は4手法すべて ViT-B16 に統一**する（MAE/DINO/BarlowTwins/SimSiam を ViT で学習）。
       ResNet50 系（BT/SimSiam）の学習済みモデルは「バックボーン参照」として残し、
@@ -93,6 +129,12 @@ goal:
     - 各手法の「学習した表現の性質」の差異が、上記(a)(b)(c)の定量・定性結果として
       レポートに整理されていること。
     - （拡張）UNI 等の基盤モデルを同じ比較軸に載せる準備・手順が整っていること。
+    - （拡張）手元のSlurm・単一GPU環境での実行を維持したまま、スパコン
+      （miyabi, PBS環境）でのマルチGPU・マルチノードDDP並列実行が可能になっており、
+      各手法のall_reduce/all_gather（cross-correlation・Sinkhorn-Knopp・
+      teacher center）とSyncBatchNormが有効化された状態で、各手法が原論文により
+      近いバッチサイズ条件下でも崩壊なく学習できること
+      （詳細は `docs/multi_gpu_migration.md`）。
 
 outputs:
   required:

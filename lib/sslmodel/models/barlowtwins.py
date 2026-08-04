@@ -13,6 +13,7 @@ from typing import List, Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
+import torch.distributed as dist
 
 class ProjectionHead(nn.Module):
     """Base class for all projection and prediction heads.
@@ -125,11 +126,15 @@ class BarlowTwinsLoss(torch.nn.Module):
         c = torch.mm(z_a_norm.T, z_b_norm) / N # DxD
 
         # sum cross-correlation matrix between multiple gpus
-        #if self.gather_distributed and dist.is_initialized():
-        #    world_size = dist.get_world_size()
-        #    if world_size > 1:
-        #        c = c / world_size
-        #        dist.all_reduce(c)
+        # (Goal.yaml 2026-08-03 / docs/multi_gpu_migration.md §2: マルチGPU時に
+        # 有効化しないと各GPUのローカルバッチだけでcross-correlationを計算してしまい
+        # 実効バッチサイズが増えない。gather_distributed=Falseの単一GPU実行では
+        # 従来通り no-op。)
+        if self.gather_distributed and dist.is_initialized():
+            world_size = dist.get_world_size()
+            if world_size > 1:
+                c = c / world_size
+                dist.all_reduce(c)
 
         # loss — computed without materializing a DxD identity/mask (the old code
         # built torch.eye(D) on CPU every step; at the paper's D=8192 that is a

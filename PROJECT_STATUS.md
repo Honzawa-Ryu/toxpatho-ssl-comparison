@@ -3,9 +3,59 @@
 > **重要: このファイルは毎回の作業後に必ず更新すること。**
 > 次セッション開始時にはまずこのファイルを読んで状況を把握する。
 
-最終更新: 2026-08-01（セッション6: レビュー`report.md`が指摘したパイプライン断絶を修正。詳細は下記「🔧 パイプライン断絶の修正」）
+最終更新: 2026-08-04（セッション7: マルチGPU移行の未コミット変更をレビュー。詳細は下記「🔀 マルチGPU移行（レビュー）」）
 
 > **やること・研究方針の一覧は [TODO.md](TODO.md) を参照**（試験間差除去テーマC章を含む）。
+
+---
+
+## 🔀 マルチGPU移行（2026-08-04, セッション7: レビュー）
+
+前セッション（セッション6以降のどこか）で `docs/multi_gpu_migration.md` の優先順位1〜3
+（`lib/trainer/distributed.py` 実装／`data.py` のrank分割／SSL手法別all_reduce有効化）が
+未コミットのまま実装されていた。本セッションはこれをレビューし、単一GPU後方互換性
+（Goal.yaml必須要件）を静的に検証した。**agentパーティション capsule内はGPUなし・
+python/torchrun等の直接実行がhookで禁止**のため、実行テストは不可。全て読解による
+静的レビュー。
+
+### レビュー結果
+- **項目1（`distributed.py`実装 + rank0ガード）**: 実装済み・妥当。
+  `RANK`/`WORLD_SIZE`未設定時は`setup()`/`wrap()`/`barrier()`等が全てno-opで
+  従来のシングルGPU実行と同一に振る舞うことを確認（`is_distributed_env()`が
+  `WORLD_SIZE`未設定または`<=1`ならFalseを返す設計）。
+  `entry.py`のwandb.init、`loop.py`のcheckpoint保存/eff_rank監視/logger書き出しが
+  `distributed.is_main_process()`でrank0限定化済み。
+- **項目2（`data.py`のrank分割）**: 実装済み・妥当。
+  `create_sharded_dataset(..., split_by_rank=True)`で`wds.split_by_node`を使用
+  （world_size=1では`wds.shardlists.single_node_only`相当の挙動と同一のはず。
+  webdataset自体がこのcapsuleに未インストールのため実行検証はできず、
+  API存在は過去の知識ベース・コード上の使用パターンからの判断）。
+  eval_dataset側は意図的に`split_by_rank=False`のまま（全rank同一valで
+  early stopping判定を揃えるため）。epoch長計算もworld_size考慮済み。
+- **項目3（SSL手法別all_reduce有効化）**: 実装済み・妥当。
+  Barlow Twinsのcross-correlation、SwAVのSinkhorn-Knopp、DINOのteacher center更新、
+  いずれも`dist.is_initialized()`ガード付きで有効化されており、`gather_distributed`
+  系フラグは`lib/sslmodel/sslutils.py`で`distributed.world_size() > 1`から自動設定
+  （単一GPUでは常にFalse = 従来通りコメントアウト時と同じ計算）。
+- **見つけた問題（修正済み）**: 実装自体にバグはなかったが、3箇所のコメントが
+  「将来DDPラップが入る場所」「REFACTOR_PLAN.md §6-4」等、**実装済みである現状と
+  矛盾する内容のまま**だった（`entry.py`の`main()`docstring・`distributed.wrap()`
+  呼び出し直後のコメント、`model.py`のモジュールdocstring）。実装内容に合わせて
+  更新した。
+
+### 未実施（項目4・5、次セッションへの申し送り）
+- `templates/run_slurm.sh` / `scripts/slurm_entry.sh` の1ノード内マルチGPU対応
+  （`torchrun --standalone --nproc_per_node=N`化）とマルチノード対応は**未着手**。
+  本capsuleはGPUなし・python直接実行不可のため実機検証ができず、「既存の単一GPU
+  投入は無変更で動作すること = 後方互換必須」（Goal.yaml）を壊すリスクを検証できない
+  まま変更するのは避けた。実GPUで検証できるセッション（ログインノード経由、または
+  GPU付きcapsule）で着手すること。
+- 項目1〜3の**実機での動作確認**（実際に`torchrun --nproc_per_node=2`等でBarlow
+  Twins等を数epoch回し、崩壊しないこと・checkpointが1つだけ書かれること・
+  wandb runが重複しないことを確認）も未実施。単体テスト（pytest）もこのリポジトリの
+  distributed周りには存在しない。次にGPUが使えるセッションでのsmoke testを推奨。
+- `wds.split_by_node` / `wds.shardlists.single_node_only` のAPI存在・挙動は
+  webdataset未インストール環境のため未検証（項目2参照）。
 
 ---
 

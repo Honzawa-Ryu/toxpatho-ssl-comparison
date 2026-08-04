@@ -1,0 +1,776 @@
+<title>マルチGPU移行調査 — toxpatho-ssl-comparison</title>
+<style>
+  :root {
+    color-scheme: light dark;
+
+    --bg: #eef0f2;
+    --bg-elevated: #ffffff;
+    --bg-inset: #e4e7ea;
+    --border: #d6dadf;
+    --border-strong: #b9bfc6;
+    --text: #1c1f26;
+    --text-dim: #565b64;
+    --text-faint: #8a8f97;
+
+    --accent: #b6672b;
+    --accent-soft: rgba(182, 103, 43, 0.12);
+    --accent-ink: #ffffff;
+
+    --status-missing: #a8452f;
+    --status-missing-bg: rgba(168, 69, 47, 0.1);
+    --status-disabled: #3f5a8f;
+    --status-disabled-bg: rgba(63, 90, 143, 0.1);
+    --status-fix: #9a6b1f;
+    --status-fix-bg: rgba(154, 107, 31, 0.12);
+    --status-review: #5b6068;
+    --status-review-bg: rgba(91, 96, 104, 0.1);
+
+    --shadow: 0 1px 2px rgba(28, 31, 38, 0.06), 0 8px 24px rgba(28, 31, 38, 0.05);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #15171c;
+      --bg-elevated: #1c1f26;
+      --bg-inset: #101216;
+      --border: #2a2e37;
+      --border-strong: #3a3f4a;
+      --text: #e9e6df;
+      --text-dim: #a4a7b0;
+      --text-faint: #6b6f78;
+
+      --accent: #d98a48;
+      --accent-soft: rgba(217, 138, 72, 0.14);
+      --accent-ink: #17120a;
+
+      --status-missing: #d38471;
+      --status-missing-bg: rgba(211, 132, 113, 0.14);
+      --status-disabled: #8fa6d6;
+      --status-disabled-bg: rgba(143, 166, 214, 0.14);
+      --status-fix: #dcb15c;
+      --status-fix-bg: rgba(220, 177, 92, 0.14);
+      --status-review: #9a9ea6;
+      --status-review-bg: rgba(154, 158, 166, 0.12);
+
+      --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 12px 32px rgba(0, 0, 0, 0.35);
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --bg: #15171c;
+    --bg-elevated: #1c1f26;
+    --bg-inset: #101216;
+    --border: #2a2e37;
+    --border-strong: #3a3f4a;
+    --text: #e9e6df;
+    --text-dim: #a4a7b0;
+    --text-faint: #6b6f78;
+    --accent: #d98a48;
+    --accent-soft: rgba(217, 138, 72, 0.14);
+    --accent-ink: #17120a;
+    --status-missing: #d38471;
+    --status-missing-bg: rgba(211, 132, 113, 0.14);
+    --status-disabled: #8fa6d6;
+    --status-disabled-bg: rgba(143, 166, 214, 0.14);
+    --status-fix: #dcb15c;
+    --status-fix-bg: rgba(220, 177, 92, 0.14);
+    --status-review: #9a9ea6;
+    --status-review-bg: rgba(154, 158, 166, 0.12);
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 12px 32px rgba(0, 0, 0, 0.35);
+  }
+
+  :root[data-theme="light"] {
+    --bg: #eef0f2;
+    --bg-elevated: #ffffff;
+    --bg-inset: #e4e7ea;
+    --border: #d6dadf;
+    --border-strong: #b9bfc6;
+    --text: #1c1f26;
+    --text-dim: #565b64;
+    --text-faint: #8a8f97;
+    --accent: #b6672b;
+    --accent-soft: rgba(182, 103, 43, 0.12);
+    --accent-ink: #ffffff;
+    --status-missing: #a8452f;
+    --status-missing-bg: rgba(168, 69, 47, 0.1);
+    --status-disabled: #3f5a8f;
+    --status-disabled-bg: rgba(63, 90, 143, 0.1);
+    --status-fix: #9a6b1f;
+    --status-fix-bg: rgba(154, 107, 31, 0.12);
+    --status-review: #5b6068;
+    --status-review-bg: rgba(91, 96, 104, 0.1);
+    --shadow: 0 1px 2px rgba(28, 31, 38, 0.06), 0 8px 24px rgba(28, 31, 38, 0.05);
+  }
+
+  * { box-sizing: border-box; }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { animation-duration: 0.001ms !important; transition-duration: 0.001ms !important; }
+  }
+
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: "Source Serif Pro", "Iowan Old Style", "Hiragino Mincho ProN", "Yu Mincho", Georgia, serif;
+    font-size: 17px;
+    line-height: 1.75;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .sans {
+    font-family: "Hiragino Sans", "Yu Gothic", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+
+  .mono {
+    font-family: ui-monospace, "SF Mono", "Cascadia Code", "JetBrains Mono", Menlo, Consolas, "MS Gothic", monospace;
+  }
+
+  a { color: var(--accent); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+  a:focus-visible, button:focus-visible, summary:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+
+  h1, h2, h3 { text-wrap: balance; font-family: "Hiragino Sans", "Yu Gothic", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+
+  code, kbd {
+    font-family: ui-monospace, "SF Mono", "Cascadia Code", "JetBrains Mono", Menlo, Consolas, monospace;
+    font-size: 0.86em;
+    background: var(--bg-inset);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 0.05em 0.4em;
+  }
+
+  /* ---------- page shell ---------- */
+
+  .page {
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 0 24px 96px;
+  }
+
+  header.doc-header {
+    padding: 64px 0 40px;
+    border-bottom: 1px solid var(--border);
+    animation: rise 0.5s ease both;
+  }
+
+  @keyframes rise {
+    from { opacity: 0; transform: translateY(8px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  .eyebrow {
+    font-size: 0.78rem;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--accent);
+    font-weight: 600;
+    margin: 0 0 14px;
+  }
+
+  h1.title {
+    font-size: clamp(1.7rem, 3.4vw, 2.5rem);
+    line-height: 1.25;
+    margin: 0 0 14px;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+  }
+
+  .doc-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 28px;
+    font-size: 0.86rem;
+    color: var(--text-dim);
+    margin-top: 18px;
+  }
+  .doc-meta dt { color: var(--text-faint); display: inline; }
+  .doc-meta div { display: flex; gap: 6px; }
+
+  .lede {
+    max-width: 62ch;
+    color: var(--text-dim);
+    font-size: 1.03rem;
+    margin: 18px 0 0;
+  }
+
+  /* ---------- stat tiles ---------- */
+
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 1px;
+    background: var(--border);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    overflow: hidden;
+    margin-top: 32px;
+  }
+  .stat {
+    background: var(--bg-elevated);
+    padding: 18px 20px;
+  }
+  .stat .n {
+    font-family: ui-monospace, "SF Mono", "Cascadia Code", monospace;
+    font-variant-numeric: tabular-nums;
+    font-size: 1.9rem;
+    font-weight: 600;
+    line-height: 1;
+  }
+  .stat .n.missing { color: var(--status-missing); }
+  .stat .n.disabled { color: var(--status-disabled); }
+  .stat .n.fix { color: var(--status-fix); }
+  .stat .label {
+    margin-top: 8px;
+    font-size: 0.78rem;
+    color: var(--text-dim);
+    letter-spacing: 0.02em;
+  }
+
+  /* ---------- layout: rail + content ---------- */
+
+  .layout {
+    display: grid;
+    grid-template-columns: 200px minmax(0, 1fr);
+    gap: 56px;
+    padding-top: 40px;
+  }
+
+  nav.toc {
+    position: sticky;
+    top: 32px;
+    align-self: start;
+    font-size: 0.85rem;
+  }
+  nav.toc ol {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    border-left: 1px solid var(--border);
+  }
+  nav.toc li { margin: 0; }
+  nav.toc a {
+    display: block;
+    padding: 7px 0 7px 16px;
+    margin-left: -1px;
+    border-left: 2px solid transparent;
+    color: var(--text-dim);
+    text-decoration: none;
+    transition: color 0.15s ease, border-color 0.15s ease;
+  }
+  nav.toc a:hover { color: var(--text); border-left-color: var(--border-strong); }
+  nav.toc .num {
+    font-family: ui-monospace, monospace;
+    color: var(--text-faint);
+    margin-right: 8px;
+    font-size: 0.8em;
+  }
+
+  main.content { min-width: 0; max-width: 760px; }
+
+  section.doc-section {
+    padding: 48px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  section.doc-section:last-of-type { border-bottom: none; }
+
+  .section-head {
+    display: flex;
+    align-items: baseline;
+    gap: 14px;
+    margin-bottom: 8px;
+  }
+  .section-num {
+    font-family: ui-monospace, monospace;
+    color: var(--accent);
+    font-size: 0.9rem;
+    font-weight: 600;
+  }
+  h2.section-title {
+    font-size: 1.35rem;
+    margin: 0;
+    font-weight: 700;
+  }
+  h3.sub-title {
+    font-size: 1.05rem;
+    font-weight: 700;
+    margin: 28px 0 10px;
+  }
+
+  p { margin: 14px 0; }
+  ul, ol { padding-left: 1.3em; }
+  li { margin: 6px 0; }
+
+  /* ---------- table ---------- */
+
+  .table-wrap {
+    overflow-x: auto;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    margin: 20px 0;
+    box-shadow: var(--shadow);
+  }
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    font-size: 0.92rem;
+    background: var(--bg-elevated);
+  }
+  thead th {
+    text-align: left;
+    font-family: ui-monospace, monospace;
+    font-size: 0.72rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-faint);
+    background: var(--bg-inset);
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+  }
+  tbody td {
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+  }
+  tbody tr:last-child td { border-bottom: none; }
+  td.path {
+    font-family: ui-monospace, monospace;
+    font-size: 0.82rem;
+    color: var(--text);
+    white-space: nowrap;
+    width: 1%;
+  }
+  td.status { width: 1%; white-space: nowrap; }
+  td.note { color: var(--text-dim); font-family: "Hiragino Sans", "Yu Gothic", sans-serif; font-size: 0.88rem; line-height: 1.65; }
+
+  /* ---------- status chip ---------- */
+
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-family: "Hiragino Sans", "Yu Gothic", sans-serif;
+    font-size: 0.76rem;
+    font-weight: 600;
+    padding: 3px 10px;
+    border-radius: 999px;
+    white-space: nowrap;
+  }
+  .chip::before {
+    content: "";
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: currentColor;
+    flex: none;
+  }
+  .chip-missing { color: var(--status-missing); background: var(--status-missing-bg); }
+  .chip-disabled { color: var(--status-disabled); background: var(--status-disabled-bg); }
+  .chip-fix { color: var(--status-fix); background: var(--status-fix-bg); }
+  .chip-review { color: var(--status-review); background: var(--status-review-bg); }
+
+  .legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px 20px;
+    margin: 18px 0 28px;
+    font-size: 0.82rem;
+    color: var(--text-dim);
+  }
+  .legend span { display: inline-flex; align-items: center; gap: 8px; }
+
+  /* ---------- callout ---------- */
+
+  .callout {
+    border-left: 3px solid var(--accent);
+    background: var(--accent-soft);
+    border-radius: 0 8px 8px 0;
+    padding: 16px 20px;
+    margin: 22px 0;
+  }
+  .callout .callout-label {
+    font-family: ui-monospace, monospace;
+    font-size: 0.72rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--accent);
+    font-weight: 700;
+    margin-bottom: 6px;
+  }
+  .callout p { margin: 6px 0; color: var(--text); font-size: 0.94rem; }
+
+  /* ---------- priority steps ---------- */
+
+  .steps {
+    list-style: none;
+    margin: 20px 0;
+    padding: 0;
+    counter-reset: step;
+  }
+  .steps li {
+    counter-increment: step;
+    position: relative;
+    padding: 0 0 24px 44px;
+    border-left: 1px solid var(--border);
+    margin-left: 13px;
+  }
+  .steps li:last-child { border-left-color: transparent; padding-bottom: 0; }
+  .steps li::before {
+    content: counter(step);
+    position: absolute;
+    left: -13px;
+    top: 0;
+    width: 26px; height: 26px;
+    border-radius: 50%;
+    background: var(--bg-elevated);
+    border: 1px solid var(--accent);
+    color: var(--accent);
+    font-family: ui-monospace, monospace;
+    font-size: 0.8rem;
+    font-weight: 700;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .steps .step-title { font-weight: 700; font-family: "Hiragino Sans", "Yu Gothic", sans-serif; margin-bottom: 2px; }
+  .steps .step-body { color: var(--text-dim); font-size: 0.94rem; }
+
+  footer.doc-footer {
+    margin-top: 24px;
+    padding-top: 24px;
+    border-top: 1px solid var(--border);
+    color: var(--text-faint);
+    font-size: 0.82rem;
+  }
+
+  @media (max-width: 880px) {
+    .layout { grid-template-columns: 1fr; gap: 24px; }
+    nav.toc {
+      position: static;
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 16px;
+      margin-bottom: 8px;
+    }
+    nav.toc ol {
+      border-left: none;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px 18px;
+    }
+    nav.toc a { padding: 4px 0; border-left: none; }
+    .stats { grid-template-columns: repeat(2, 1fr); }
+  }
+</style>
+
+<div class="page">
+
+  <header class="doc-header">
+    <p class="eyebrow sans">調査メモ &middot; インフラ</p>
+    <h1 class="title">マルチGPU・スパコン環境移行のための変更点</h1>
+    <p class="lede">
+      toxpatho-ssl-comparison を、現状のシングルGPU・単一ノード運用から
+      複数GPU（将来的にはマルチノードDDP）環境へ移行する際に必要な変更点の棚卸し。
+      実装前の調査メモであり、着手時は別途プラン化する。
+    </p>
+    <dl class="doc-meta sans">
+      <div><dt>調査日</dt><dd>2026-08-03</dd></div>
+      <div><dt>対象</dt><dd class="mono">toxpatho-ssl-comparison</dd></div>
+      <div><dt>種別</dt><dd>技術調査 / 未実装</dd></div>
+    </dl>
+
+    <div class="stats">
+      <div class="stat">
+        <div class="n">18</div>
+        <div class="label sans">確認済み箇所</div>
+      </div>
+      <div class="stat">
+        <div class="n missing">4</div>
+        <div class="label sans">未実装（no-op）</div>
+      </div>
+      <div class="stat">
+        <div class="n disabled">2</div>
+        <div class="label sans">実装済みだが無効化</div>
+      </div>
+      <div class="stat">
+        <div class="n fix">7</div>
+        <div class="label sans">要修正（既存コード変更）</div>
+      </div>
+    </div>
+  </header>
+
+  <div class="layout">
+    <nav class="toc sans" aria-label="目次">
+      <ol>
+        <li><a href="#premise"><span class="num">00</span>前提</a></li>
+        <li><a href="#core"><span class="num">01</span>分散学習ロジック</a></li>
+        <li><a href="#ssl"><span class="num">02</span>SSL手法のDDP対応</a></li>
+        <li><a href="#infra"><span class="num">03</span>ジョブ投入・インフラ</a></li>
+        <li><a href="#container"><span class="num">04</span>コンテナ・依存関係</a></li>
+        <li><a href="#ops"><span class="num">05</span>運用・検証観点</a></li>
+        <li><a href="#priority"><span class="num">06</span>着手順</a></li>
+      </ol>
+    </nav>
+
+    <main class="content">
+
+      <section id="premise" class="doc-section">
+        <div class="section-head">
+          <span class="section-num">00</span>
+          <h2 class="section-title">前提・現状認識</h2>
+        </div>
+        <p>
+          このコードベースは「将来のマルチGPU化」を見据えた設計が既にされている。
+          <code>lib/trainer/distributed.py</code> を中心に拡張ポイントが切り出されており、
+          <code>entry.py</code> / <code>model.py</code> からの呼び出し配線も済んでいる。
+        </p>
+        <p>
+          <strong>ただし実装自体は全て no-op で、シングルGPU専用のまま。</strong>
+          また、SSL手法側（Barlow Twins / SwAV / DINO）にはDDP対応コードが
+          書かれてはいるが、コメントアウトされて無効化されている箇所がある。
+        </p>
+      </section>
+
+      <section id="core" class="doc-section">
+        <div class="section-head">
+          <span class="section-num">01</span>
+          <h2 class="section-title">分散学習ロジック本体</h2>
+        </div>
+        <p class="sans" style="color:var(--text-faint); font-size:0.85rem;"><code>lib/trainer/</code></p>
+
+        <div class="legend">
+          <span><span class="chip chip-missing">未実装</span> コードが存在しない</span>
+          <span><span class="chip chip-fix">要修正</span> 既存コードの変更が必要</span>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>ファイル</th><th>現状</th><th>必要な変更</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td class="path">distributed.py</td>
+                <td class="status"><span class="chip chip-missing">未実装</span></td>
+                <td class="note"><code>setup()</code>/<code>teardown()</code>/<code>rank()</code>/<code>world_size()</code>/<code>wrap()</code> が全て no-op（<code>rank()=0</code>, <code>world_size()=1</code> 固定）。<code>torch.distributed.init_process_group</code> の呼び出し、環境変数（<code>RANK</code>/<code>WORLD_SIZE</code>/<code>LOCAL_RANK</code>）読み取り、<code>DistributedDataParallel</code> ラップを実装する。呼び出し口は既に配線済みなので、ここを実装するだけで多くが繋がる。</td>
+              </tr>
+              <tr>
+                <td class="path">context.py:90</td>
+                <td class="status"><span class="chip chip-fix">要修正</span></td>
+                <td class="note"><code>device = torch.device('cuda:0' if ...)</code> が固定。<code>local_rank</code> に応じた <code>cuda:{local_rank}</code> への変更が必須（さもないと全プロセスがGPU0を奪い合う）。</td>
+              </tr>
+              <tr>
+                <td class="path">entry.py</td>
+                <td class="status"><span class="chip chip-fix">要修正</span></td>
+                <td class="note"><code>_run()</code> 内の <code>wandb.init(...)</code> にrank0ガードなし。<code>distributed.is_main_process()</code>（定義済み・未使用）でガードしないと、重複run・重複ログが発生する。</td>
+              </tr>
+              <tr>
+                <td class="path">loop.py</td>
+                <td class="status"><span class="chip chip-fix">要修正</span></td>
+                <td class="note"><code>torch.save(state, ...)</code>、<code>LOGGER.logger.info(...)</code>、<code>run.log(...)</code> が全プロセス実行前提。チェックポイント書き込み・ログ・wandb.logをrank0限定にしないと、複数プロセスが同じファイルに競合書き込みする。</td>
+              </tr>
+              <tr>
+                <td class="path">data.py</td>
+                <td class="status"><span class="chip chip-missing">未実装</span></td>
+                <td class="note">WebDatasetのshardをk-fold分割しているだけで、<code>split_by_node</code>/<code>split_by_worker</code>（webdatasetが提供）が未実装（コメントで明言済み）。今のままだと各GPUプロセスが同じシャードを重複して読む。<code>.with_epoch(...)</code> のepoch長計算もworld_sizeを考慮していないため再設計が必要。</td>
+              </tr>
+              <tr>
+                <td class="path">optim.py</td>
+                <td class="status"><span class="chip chip-missing">未実装</span></td>
+                <td class="note">world_sizeに応じた学習率スケーリング（linear scaling rule等）が未実装（コメントで明言済み）。global batch sizeが変わるSSL手法（特にBarlow Twins/SwAV/SimCLR）は要調整。</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="callout">
+          <p class="callout-label mono">所見</p>
+          <p>データローダーが shard を rank ごとに分割していない状態でマルチGPU化すると、
+          学習効率が上がらないどころか、<strong>各GPUが完全に同じデータを重複して読む</strong>だけの
+          構成になる。分散化の中でも優先度が高い。</p>
+        </div>
+      </section>
+
+      <section id="ssl" class="doc-section">
+        <div class="section-head">
+          <span class="section-num">02</span>
+          <h2 class="section-title">SSL手法側のDDP対応</h2>
+        </div>
+        <p class="sans" style="color:var(--text-faint); font-size:0.85rem;"><code>lib/sslmodel/models/</code></p>
+        <p>
+          見落としやすいポイント。GPUを増やしても、手法によっては
+          <strong>各GPU内のミニバッチだけで統計量を計算すると数学的に誤った損失になる</strong>ため、
+          個別対応が必要。
+        </p>
+
+        <div class="legend">
+          <span><span class="chip chip-disabled">無効化</span> 実装はあるがコメントアウト済み</span>
+          <span><span class="chip chip-missing">未実装</span></span>
+          <span><span class="chip chip-review">要検討</span></span>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>ファイル</th><th>現状</th><th>内容</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td class="path">barlowtwins.py:126-132</td>
+                <td class="status"><span class="chip chip-disabled">無効化</span></td>
+                <td class="note">cross-correlation行列を全GPUでall_reduceするコードが実装済みだが<strong>まるごとコメントアウト</strong>（<code>#if self.gather_distributed...</code>）。有効化しないと、各GPUが自分のローカルバッチだけでcross-correlationを計算する＝実効バッチサイズが増えない。</td>
+              </tr>
+              <tr>
+                <td class="path">swav.py:156-176</td>
+                <td class="status"><span class="chip chip-disabled">無効化</span></td>
+                <td class="note">Sinkhorn-Knopp反復のall_gather/all_reduceも同様に<strong>コメントアウト</strong>。SwAVはプロトタイプ割当がバッチ全体の分布に依存するため、GPU間gatherなしだと崩壊しやすい。</td>
+              </tr>
+              <tr>
+                <td class="path">dino.py:96-99<br><span style="color:var(--text-faint)">(update_center)</span></td>
+                <td class="status"><span class="chip chip-missing">未実装</span></td>
+                <td class="note">teacher出力のcenterをローカルバッチの平均だけで更新している。マルチGPUでは全GPUのteacher出力をall_reduceしてcenterを揃える必要がある。</td>
+              </tr>
+              <tr>
+                <td class="path">trainer/model.py<br><span style="color:var(--text-faint)">(BatchNorm)</span></td>
+                <td class="status"><span class="chip chip-review">要検討</span></td>
+                <td class="note">ResNet50/DenseNet121バックボーンや各種ProjectionHeadが <code>nn.BatchNorm1d/2d</code> を使用。DDPでは各GPUのローカルバッチでBN統計が計算され、有効バッチサイズが小さいままになる（SimCLR系は特に影響大）。<code>SyncBatchNorm.convert_sync_batchnorm</code> の適用を検討。</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="callout">
+          <p class="callout-label mono">所見</p>
+          <p>Barlow Twins / SwAV は「GPU間で正しい統計を取らないと収束の意味が変わる」手法。
+          コメントアウトされたコードが<strong>再度書かれたことがある</strong>ということは、
+          過去に一度着手されて途中で止まった形跡とも読める。有効化前に、当時止めた理由が
+          残っていないか確認するとよい。</p>
+        </div>
+      </section>
+
+      <section id="infra" class="doc-section">
+        <div class="section-head">
+          <span class="section-num">03</span>
+          <h2 class="section-title">ジョブ投入・インフラ（Slurm / PBS）</h2>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>ファイル</th><th>現状</th><th>必要な変更</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td class="path">run_slurm.sh:9</td>
+                <td class="status"><span class="chip chip-fix">要修正</span></td>
+                <td class="note"><code>#SBATCH --gres=gpu:1</code> <code>--nodes=1</code> 固定。GPU数・ノード数をパラメータ化する必要。</td>
+              </tr>
+              <tr>
+                <td class="path">run_slurm.sh<br><span style="color:var(--text-faint)">(RUN_COMMAND)</span></td>
+                <td class="status"><span class="chip chip-fix">要修正</span></td>
+                <td class="note">単一プロセス起動（<code>python ...</code>）前提。1ノード内マルチGPUなら <code>torchrun --standalone --nproc_per_node=N</code>、複数ノードなら <code>srun ... torchrun --rdzv_backend=c10d --rdzv_endpoint=$MASTER_ADDR:$MASTER_PORT --nnodes=$SLURM_NNODES --nproc_per_node=N</code> へ変更。<code>MASTER_ADDR</code>（<code>scontrol show hostnames</code> 等で先頭ノードを解決）や空きポートの決定ロジックも追加が要る。</td>
+              </tr>
+              <tr>
+                <td class="path">slurm_entry.sh<br><span style="color:var(--text-faint)">(_run_single)</span></td>
+                <td class="status"><span class="chip chip-fix">要修正</span></td>
+                <td class="note"><code>apptainer exec --nv ...</code> を1回だけ実行する設計。マルチノードでは各ノードで1回ずつコンテナ起動が必要なため、<code>srun apptainer exec --nv ...</code> のようにsrun配下でコンテナ起動する形へ変更が必要。</td>
+              </tr>
+              <tr>
+                <td class="path">data.py / run_slurm.sh<br><span style="color:var(--text-faint)">(cpus-per-task)</span></td>
+                <td class="status"><span class="chip chip-fix">要修正</span></td>
+                <td class="note"><code>num_workers_train = 16</code> と <code>--cpus-per-task=16</code> が1GPUプロセス分の想定。1ノードにGPU×N個載せてプロセスもN個立てる場合、<code>--cpus-per-task</code> をN倍にするかworker数を減らす調整が必要（<code>torch.set_num_threads(1)</code> と合わせて設計）。</td>
+              </tr>
+              <tr>
+                <td class="path">exp_common.sh<br><span style="color:var(--text-faint)">(exp_resolve_partition)</span></td>
+                <td class="status"><span class="chip chip-review">要確認</span></td>
+                <td class="note">パーティション自動判定が実行時間のみに基づく（GPU数は考慮外）。対象スパコンのパーティション体系がGPU数で分かれている場合は拡張が必要。</td>
+              </tr>
+              <tr>
+                <td class="path">PBS(Miyabi)投入</td>
+                <td class="status"><span class="chip chip-review">要確認</span></td>
+                <td class="note">README/USAGE記載の通り、<code>runx</code>（ジョブ投入）は現状Slurm専用。対象スパコンがPBS系（Miyabiなど）でマルチGPU投入も自前ツールでやりたい場合、投入側の拡張が別途必要（現状PBSはキャンセル・監視のみ対応）。</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="container" class="doc-section">
+        <div class="section-head">
+          <span class="section-num">04</span>
+          <h2 class="section-title">コンテナ・依存関係</h2>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>ファイル</th><th>現状</th><th>備考</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td class="path">env/env.def</td>
+                <td class="status"><span class="chip chip-review">要確認</span></td>
+                <td class="note"><code>nvidia/cuda:12.8.1-cudnn-devel-ubuntu24.04</code> ベース。NCCLはpip版torch wheelに同梱されるため単一ノード内マルチGPUは概ね問題ないはず。マルチノードでInfiniBand/専用インターコネクトを使う環境では、サイト固有のNCCLプラグイン（libibverbs、UCX、ベンダー製OFIプラグイン等）がコンテナに入っているか要確認。対象スパコン側の推奨NCCL設定に合わせて再ビルドが必要になる可能性が高い。</td>
+              </tr>
+              <tr>
+                <td class="path">pyproject.toml</td>
+                <td class="status"><span class="chip chip-review">概ね良好</span></td>
+                <td class="note">torch自体はcu130ホイールで問題なし。追加のマルチノード通信ライブラリ（<code>nccl-tests</code>での動作確認等）が要る場合は別途検討。</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="ops" class="doc-section">
+        <div class="section-head">
+          <span class="section-num">05</span>
+          <h2 class="section-title">運用・検証観点</h2>
+        </div>
+        <ul>
+          <li>wandb/Slack通知の重複防止（rank0限定化、§01と連動）</li>
+          <li>WebDatasetのシャード数がGPU数（world_size）に対して十分か（<code>data/shards</code> は現状20シャード → GPU数がこれを超えると空プロセスが出る）</li>
+          <li>有効バッチサイズが変わることによる、<code>Goal.yaml</code> 記載の「原論文設定準拠」方針とのすり合わせ（LRだけでなくbatch/epoch設計全体の再検討）</li>
+          <li>まずは1ノード内マルチGPU（DDP, <code>torchrun --standalone</code>）で動作・収束を検証し、その後マルチノードへ拡張する段階的アプローチを推奨</li>
+          <li><code>Makefile: test</code>/<code>tests/</code> にDDPのsmokeテスト追加、<code>scripts/preflight_check.py</code> にGPU数・torchrun起動設定の整合性チェック追加を検討</li>
+        </ul>
+      </section>
+
+      <section id="priority" class="doc-section">
+        <div class="section-head">
+          <span class="section-num">06</span>
+          <h2 class="section-title">推奨の着手順</h2>
+        </div>
+        <p>依存関係上、この順で進めるのが自然。</p>
+        <ol class="steps">
+          <li>
+            <div class="step-title sans">分散基盤の実装</div>
+            <div class="step-body"><code>lib/trainer/distributed.py</code> 実装 ＋ rank0ガード（<code>entry.py</code> / <code>loop.py</code>）</div>
+          </li>
+          <li>
+            <div class="step-title sans">データ分割</div>
+            <div class="step-body"><code>lib/trainer/data.py</code> のシャードのrank分割</div>
+          </li>
+          <li>
+            <div class="step-title sans">SSL手法の統計量修正</div>
+            <div class="step-body">SSL手法別のgather/all_reduce有効化（<code>barlowtwins.py</code> / <code>swav.py</code> / <code>dino.py</code>）</div>
+          </li>
+          <li>
+            <div class="step-title sans">単一ノード内マルチGPU起動</div>
+            <div class="step-body"><code>templates/run_slurm.sh</code> / <code>scripts/slurm_entry.sh</code> のマルチGPU起動対応（<code>torchrun --standalone</code> から）</div>
+          </li>
+          <li>
+            <div class="step-title sans">マルチノード対応</div>
+            <div class="step-body"><code>srun</code> + <code>torchrun</code> の rendezvous、コンテナ側ネットワーク設定</div>
+          </li>
+        </ol>
+      </section>
+
+    </main>
+  </div>
+
+  <footer class="doc-footer sans">
+    調査メモ &middot; 実装計画ではありません &middot; docs/multi_gpu_migration.md に同内容のMarkdown版あり
+  </footer>
+
+</div>

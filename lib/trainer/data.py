@@ -14,6 +14,7 @@ import torch
 from torch.utils.data import default_collate
 import webdataset as wds
 
+from lib.trainer import distributed
 from lib.trainer.context import RunContext
 
 
@@ -23,14 +24,21 @@ def get_shard_file_list(data_dir: str):
     return np.array(shards)
 
 
-def create_sharded_dataset(urls, batch_size, transform=None, is_train=True):
-    """WebDatasetのパイプラインを作成（高速化＆無限ループ修正版）"""
-    
+def create_sharded_dataset(urls, batch_size, transform=None, is_train=True, split_by_rank=False):
+    """WebDatasetのパイプラインを作成（高速化＆無限ループ修正版）
+
+    split_by_rank: Trueなら `wds.split_by_node` でrank単位にshardを分割する
+    （マルチGPU時、各GPUプロセスが同じshardを重複して読むのを防ぐ。
+    Goal.yaml 2026-08-03 / docs/multi_gpu_migration.md §1）。
+    world_size==1（単一GPU/未分散）では`wds.split_by_node`は素通りするだけなので、
+    既存の単一GPU実行の挙動は変わらない。
+    """
     # 修正1: resampled=is_train を削除（無限ループ回避）
     dataset = wds.WebDataset(
-        urls, 
+        urls,
         shardshuffle=is_train,  # 学習時はTrue、検証時はFalse
         empty_check=False,  # 空のシャードをスキップ
+        nodesplitter=wds.split_by_node if split_by_rank else wds.shardlists.single_node_only,
     )
     
     if is_train:
@@ -86,7 +94,16 @@ def prepare_data(
     # fold 同士は素なので、通常ケースでの選択結果は従来と同一。
     train_shards = [s for i, f in enumerate(folds) if i != fold_idx for s in f]
 
-    print(f"Fold {fold_idx}: Train shards={len(train_shards)}, Val shards={len(val_shards)}")
+    world_size = distributed.world_size()
+    if world_size > 1 and len(train_shards) < world_size:
+        raise ValueError(
+            f"train shard 数 ({len(train_shards)}) が world_size ({world_size}) 未満のため "
+            f"空プロセスが出る。shard を増やすか GPU 数を減らすこと "
+            f"（docs/multi_gpu_migration.md §5）。"
+        )
+
+    print(f"Fold {fold_idx}: Train shards={len(train_shards)}, Val shards={len(val_shards)}"
+          + (f", world_size={world_size}" if world_size > 1 else ""))
 
     # --- Transforms ---
     train_transform = ctx.ssl_class.prepare_transform(
@@ -100,13 +117,21 @@ def prepare_data(
     # --- Datasets ---
     # batch_size を WebDataset に渡す
     num_workers_train = 16
+    # epoch長はworld_size台のプロセス全体で ~1,000,000 枚/epoch になるよう、
+    # rank単体の目標枚数を world_size で割る（docs/multi_gpu_migration.md §1
+    # 「epoch長のworld_size考慮」）。world_size==1では従来と同じ値になる。
+    samples_per_rank_per_epoch = 1_000_000 // world_size
     train_dataset = create_sharded_dataset(
         train_shards,
         batch_size=batch_size,
         transform=train_transform,
-        is_train=True
-    ).with_epoch(1_000_000 // (args.batch_size * num_workers_train))
-    # eval_dataset: val shards with augmented pairs for alignment/uniformity
+        is_train=True,
+        split_by_rank=True,  # shardをrank単位に分割（重複読み込み防止）
+    ).with_epoch(samples_per_rank_per_epoch // (args.batch_size * num_workers_train))
+    # eval_dataset: val shards with augmented pairs for alignment/uniformity.
+    # 意図的に split_by_rank=False（全rankが同一のval shard集合を読む）:
+    # early stopping / effective-rank監視の判定を全rankで一致させ、rank0限定の
+    # チェックポイント保存・ログと矛盾なく動かすため（docs/multi_gpu_migration.md §1,2）。
     eval_dataset = create_sharded_dataset(val_shards, batch_size=batch_size, transform=train_transform, is_train=False)
 
     # --- DataLoaders ---

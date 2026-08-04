@@ -400,7 +400,7 @@ class EarlyStopping:
     Early stops the training if validation loss doesn't improve after a given patience.
     add some changes from from https://github.com/Bjarten/early-stopping-pytorch/pytorchtools.py
     """
-    def __init__(self, patience:int=7, delta:float=0, path:str='checkpoint.pt'):
+    def __init__(self, patience:int=7, delta:float=0, path:str='checkpoint.pt', save_enabled:bool=True):
         """
         Parameters
         ----------
@@ -410,9 +410,16 @@ class EarlyStopping:
             delta (float)
                 Minimum change in the monitored quantity to qualify as an improvement.
 
-            path (str): 
+            path (str):
                 Path for the checkpoint to be saved to.
-   
+
+            save_enabled (bool)
+                Trueならcheckpoint.ptへの実書き込みを行う。マルチGPU(DDP)実行時、
+                全rankが同一のval_lossを見て内部状態(counter/best_score/early_stop)は
+                揃えたいが、ファイル書き込みは rank0 だけにしたい場合に False を渡す
+                （lib/trainer/model.py: save_enabled=distributed.is_main_process()）。
+                デフォルトTrueなので単一プロセス実行時の挙動は変わらない。
+
         """
         self.patience = patience
         self.counter = 0
@@ -420,6 +427,7 @@ class EarlyStopping:
         self.early_stop = False
         self.delta = delta
         self.path = path
+        self.save_enabled = save_enabled
 
     def __call__(self, val_loss, model):
         if val_loss > self.best_score - self.delta:
@@ -433,7 +441,8 @@ class EarlyStopping:
 
     def save_checkpoint(self, model):
         '''Saves model when validation loss decrease.'''
-        torch.save(model.state_dict(), self.path)
+        if self.save_enabled:
+            torch.save(model.state_dict(), self.path)
 
     def delete_checkpoint(self):
         os.remove(self.path)
