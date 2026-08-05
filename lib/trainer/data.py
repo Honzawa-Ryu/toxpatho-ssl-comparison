@@ -2,154 +2,175 @@
 """
 # 学習データのロード
 
-WebDataset shard の fold 分割と DataLoader 構築。
-分散学習に移行する際は、ここに split_by_node / split_by_worker を足す
-（REFACTOR_PLAN.md §6-4）。
+`lib/analysis/blur_qc.py`(`sample_patches_to_shared_memmap`)が書き出す
+全WSI共有 memmap（`{data_dir}/patches.memmap` + `{data_dir}/index.csv`）を
+読む Dataset と、fold 分割済み DataLoader の構築。
 
+旧 WebDataset(.tar shard) 版からの移行（`data/shards/` は撤去済み。
+EXP8: experiments/0008_20260805_sample_ssl_patches_memmap が新形式の
+生成元）。map-style Dataset + memmap によりランダムアクセスでも高速に読める
+ため、WebDataset 特有の epoch 長の手動指定（`with_epoch`）は不要になった。
+
+分散学習時は `DistributedSampler` で train 行を rank ごとに分割する
+（REFACTOR_PLAN.md §6-4 の "分散学習に移行する際は split_by_node 等を足す"
+に対応）。
 """
-import glob
+from pathlib import Path
 
 import numpy as np
-import torch
-from torch.utils.data import default_collate
-import webdataset as wds
+import pandas as pd
+from torch.utils.data import DataLoader, Dataset
+from torch.utils.data.distributed import DistributedSampler
+from PIL import Image
 
 from lib.trainer import distributed
 from lib.trainer.context import RunContext
 
 
-def get_shard_file_list(data_dir: str):
-    """ディレクトリ内の .tar ファイルをソートして取得"""
-    shards = sorted(glob.glob(f"{data_dir}/*.tar"))
-    return np.array(shards)
+def load_index_table(data_dir: str) -> pd.DataFrame:
+    """`{data_dir}/index.csv`(row, wsi_id, x, y, blur_score)を読む"""
+    index_path = Path(data_dir) / "index.csv"
+    if not index_path.exists():
+        raise FileNotFoundError(f"index.csv が見つかりません: {index_path}")
+    return pd.read_csv(index_path, dtype={"wsi_id": str})
 
 
-def create_sharded_dataset(urls, batch_size, transform=None, is_train=True, split_by_rank=False):
-    """WebDatasetのパイプラインを作成（高速化＆無限ループ修正版）
+class MemmapPatchDataset(Dataset):
+    """共有 memmap（shape=(total_n_patches, patch_size, patch_size, 3), dtype=uint8）
+    のうち、`rows` で指定した行だけを読む map-style Dataset。
 
-    split_by_rank: Trueなら `wds.split_by_node` でrank単位にshardを分割する
-    （マルチGPU時、各GPUプロセスが同じshardを重複して読むのを防ぐ。
-    Goal.yaml 2026-08-03 / docs/multi_gpu_migration.md §1）。
-    world_size==1（単一GPU/未分散）では`wds.split_by_node`は素通りするだけなので、
-    既存の単一GPU実行の挙動は変わらない。
+    `np.memmap` は DataLoader worker プロセス（fork）をまたいで使い回すと
+    問題が起きやすいため、`__init__` では開かず worker 内で最初の
+    `__getitem__` 呼び出し時に遅延オープンする。
     """
-    # 修正1: resampled=is_train を削除（無限ループ回避）
-    dataset = wds.WebDataset(
-        urls,
-        shardshuffle=is_train,  # 学習時はTrue、検証時はFalse
-        empty_check=False,  # 空のシャードをスキップ
-        nodesplitter=wds.split_by_node if split_by_rank else wds.shardlists.single_node_only,
-    )
-    
-    if is_train:
-        # メモリを節約するためバッファを少し小さくする
-        dataset = dataset.shuffle(1000)
 
-    dataset = (
-        dataset
-        .decode("pil")
-        .to_tuple("jpg;png;jpeg", "json") 
-    )
+    def __init__(self, memmap_path: str, patch_size: int, rows: np.ndarray, transform=None):
+        self.memmap_path = memmap_path
+        self.patch_size = patch_size
+        self.rows = np.asarray(rows)
+        self.transform = transform
+        self._mm = None
 
-    def apply_transform(sample):
-        img, meta = sample
-        if transform:
-            # transformがリストでない（BarlowTwins用のCompose等）前提
-            img = transform(img)
-        return img  # モデルの入力に合わせて調整（通常はAugmentされた画像ペア）
+    def __len__(self) -> int:
+        return len(self.rows)
 
-    dataset = dataset.map(apply_transform)
-    
-    # 修正2: WebDataset側でバッチ化を行う（超重要）
-    # drop_last=True に相当する partial=False を設定
-    dataset = dataset.batched(batch_size, partial=False, collation_fn=default_collate)
-    
-    return dataset
-    
-def prepare_data(
-    ctx: RunContext,
-    data_dir: str="data/shards",
-    fold_idx: int = 0,
-    num_folds: int = 5,
-    batch_size: int = 32
-    ):
-    """shardsを分割して特定のfoldのtrain/evalローダーを返す"""
-    args = ctx.args
-    all_shards = get_shard_file_list(data_dir)
-    if len(all_shards) == 0:
-        raise FileNotFoundError(f"No .tar files found in {data_dir}")
+    def _memmap(self) -> np.memmap:
+        if self._mm is None:
+            self._mm = np.memmap(self.memmap_path, dtype=np.uint8, mode="r").reshape(
+                -1, self.patch_size, self.patch_size, 3
+            )
+        return self._mm
+
+    def __getitem__(self, idx: int):
+        row = int(self.rows[idx])
+        # np.array(...) でmmapページ由来のバッファをコピーする
+        # (PIL Image / 後続のtransformがmmap参照を持ち越さないようにするため)
+        patch = np.array(self._memmap()[row])
+        img = Image.fromarray(patch, mode="RGB")
+        if self.transform:
+            img = self.transform(img)
+        return img
+
+
+def split_wsi_ids_by_fold(wsi_ids: np.ndarray, fold_idx: int, num_folds: int) -> tuple[set, set]:
+    """ソート済みwsi_idをnum_folds個に分割し、fold_idx番目をval、残りをtrainとする。"""
     if not 0 <= fold_idx < num_folds:
         raise ValueError(f"fold_idx must be in [0, {num_folds}), got {fold_idx}")
-    if len(all_shards) < num_folds:
+    if len(wsi_ids) < num_folds:
         raise ValueError(
-            f"shard 数 ({len(all_shards)}) が num_folds ({num_folds}) 未満のため "
-            f"空の fold ができる。--num_folds を減らすか shard を増やすこと。"
+            f"WSI 数 ({len(wsi_ids)}) が num_folds ({num_folds}) 未満のため "
+            f"空の fold ができる。--num_folds を減らすか WSI を増やすこと。"
         )
+    folds = np.array_split(np.sort(wsi_ids), num_folds)
+    val_wsi_ids = set(folds[fold_idx].tolist())
+    train_wsi_ids = {w for i, f in enumerate(folds) if i != fold_idx for w in f.tolist()}
+    return train_wsi_ids, val_wsi_ids
 
-    folds = np.array_split(all_shards, num_folds)
-    val_shards = folds[fold_idx].tolist()
-    # fold のインデックスで除外する。以前は `if f[0] not in val_shards` と
-    # 「fold の先頭 shard が val に含まれるか」で判定していたため、空 fold があると
-    # f[0] が IndexError になった（REFACTOR_PLAN.md §3-4）。
-    # fold 同士は素なので、通常ケースでの選択結果は従来と同一。
-    train_shards = [s for i, f in enumerate(folds) if i != fold_idx for s in f]
+
+def prepare_data(
+    ctx: RunContext,
+    data_dir: str = "data/ssl_patches",
+    patch_size: int = 224,
+    fold_idx: int = 0,
+    num_folds: int = 5,
+    batch_size: int = 32,
+):
+    """`data_dir` の共有 memmap を WSI 単位で fold 分割し、train/eval ローダーを返す。
+
+    WSI 単位で分割するのは、同じ WSI 由来のパッチが train/val 両方に混ざって
+    リークするのを避けるため（旧 shard 版の「shard 単位で fold 分割」と同じ考え方）。
+    """
+    args = ctx.args
+    index_df = load_index_table(data_dir)
+    memmap_path = str(Path(data_dir) / "patches.memmap")
+    if not Path(memmap_path).exists():
+        raise FileNotFoundError(f"patches.memmap が見つかりません: {memmap_path}")
+
+    wsi_ids = index_df["wsi_id"].unique()
+    if len(wsi_ids) == 0:
+        raise FileNotFoundError(f"{data_dir}/index.csv にパッチがありません")
+
+    train_wsi_ids, val_wsi_ids = split_wsi_ids_by_fold(wsi_ids, fold_idx, num_folds)
+    train_rows = index_df.loc[index_df["wsi_id"].isin(train_wsi_ids), "row"].to_numpy()
+    val_rows = index_df.loc[index_df["wsi_id"].isin(val_wsi_ids), "row"].to_numpy()
 
     world_size = distributed.world_size()
-    if world_size > 1 and len(train_shards) < world_size:
+    if world_size > 1 and len(train_rows) < world_size:
         raise ValueError(
-            f"train shard 数 ({len(train_shards)}) が world_size ({world_size}) 未満のため "
-            f"空プロセスが出る。shard を増やすか GPU 数を減らすこと "
+            f"train patch 数 ({len(train_rows)}) が world_size ({world_size}) 未満のため "
+            f"空プロセスが出る。WSI を増やすか GPU 数を減らすこと "
             f"（docs/multi_gpu_migration.md §5）。"
         )
 
-    print(f"Fold {fold_idx}: Train shards={len(train_shards)}, Val shards={len(val_shards)}"
-          + (f", world_size={world_size}" if world_size > 1 else ""))
+    print(
+        f"Fold {fold_idx}: Train WSIs={len(train_wsi_ids)} ({len(train_rows)} patches), "
+        f"Val WSIs={len(val_wsi_ids)} ({len(val_rows)} patches)"
+        + (f", world_size={world_size}" if world_size > 1 else "")
+    )
 
     # --- Transforms ---
     train_transform = ctx.ssl_class.prepare_transform(
         color_plob=args.color_plob, blur_plob=args.blur_plob, solar_plob=args.solar_plob,
     )
-    # 決定的リサイズのみの val_transform / val_dataset / val_loader は削除した。
-    # 検証損失（compute_val_loss）も SSL 指標（evaluator.evaluate）も eval_loader を
-    # 使っており、どこからも参照されていなかった（REFACTOR_PLAN.md §3-1）。
-    # SSL の pretext 損失には拡張ペアが必要なので eval_loader を使うのが正しい。
+    # 決定的リサイズのみの val_transform / val_dataset / val_loader は削除した(旧実装踏襲)。
+    # SSL の pretext 損失には拡張ペアが必要なので eval_loader も train_transform を使う。
 
     # --- Datasets ---
-    # batch_size を WebDataset に渡す
-    num_workers_train = 16
-    # epoch長はworld_size台のプロセス全体で ~1,000,000 枚/epoch になるよう、
-    # rank単体の目標枚数を world_size で割る（docs/multi_gpu_migration.md §1
-    # 「epoch長のworld_size考慮」）。world_size==1では従来と同じ値になる。
-    samples_per_rank_per_epoch = 1_000_000 // world_size
-    train_dataset = create_sharded_dataset(
-        train_shards,
-        batch_size=batch_size,
-        transform=train_transform,
-        is_train=True,
-        split_by_rank=True,  # shardをrank単位に分割（重複読み込み防止）
-    ).with_epoch(samples_per_rank_per_epoch // (args.batch_size * num_workers_train))
-    # eval_dataset: val shards with augmented pairs for alignment/uniformity.
-    # 意図的に split_by_rank=False（全rankが同一のval shard集合を読む）:
-    # early stopping / effective-rank監視の判定を全rankで一致させ、rank0限定の
-    # チェックポイント保存・ログと矛盾なく動かすため（docs/multi_gpu_migration.md §1,2）。
-    eval_dataset = create_sharded_dataset(val_shards, batch_size=batch_size, transform=train_transform, is_train=False)
+    train_dataset = MemmapPatchDataset(memmap_path, patch_size, train_rows, transform=train_transform)
+    eval_dataset = MemmapPatchDataset(memmap_path, patch_size, val_rows, transform=train_transform)
+
+    # rank分割: WebDataset版のsplit_by_node相当。DistributedSamplerがtrain行を
+    # rankごとに非重複に割り振る(world_size==1では従来のRandomSamplerと同じ)。
+    # eval側は意図的に分割しない(全rankが同一val集合を読み、early stopping /
+    # effective-rank監視の判定をrank間で一致させるため。旧実装のsplit_by_rank=Falseと同じ)。
+    train_sampler = None
+    if world_size > 1:
+        train_sampler = DistributedSampler(
+            train_dataset, num_replicas=world_size, rank=distributed.rank(),
+            shuffle=True, drop_last=True,
+        )
 
     # --- DataLoaders ---
-    # 修正3: DataLoaderの batch_size を None にし、num_workers を増やす
-    train_loader = torch.utils.data.DataLoader(
+    num_workers_train = 16
+    train_loader = DataLoader(
         train_dataset,
-        batch_size=None,
-        num_workers=num_workers_train,             # 8コアなら6が上限
+        batch_size=batch_size,
+        shuffle=(train_sampler is None),
+        sampler=train_sampler,
+        num_workers=num_workers_train,
         pin_memory=True,
-        persistent_workers=True,   # ← 追加(worker再生成を回避)
-        prefetch_factor=4,         # ← 復活(GPUを待たせない)
+        drop_last=True,
+        persistent_workers=True,
+        prefetch_factor=4,
     )
 
-    eval_loader = torch.utils.data.DataLoader(
+    eval_loader = DataLoader(
         eval_dataset,
-        batch_size=None,
+        batch_size=batch_size,
+        shuffle=False,
         num_workers=2,
-        pin_memory=True
+        pin_memory=True,
+        drop_last=True,
     )
 
     return train_loader, eval_loader

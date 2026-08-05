@@ -10,6 +10,7 @@ import time
 
 import numpy as np
 import torch
+from torch.utils.data.distributed import DistributedSampler
 from tqdm import tqdm
 
 import lib.sslmodel.evaluation as ssl_eval
@@ -110,6 +111,10 @@ def train(ctx: RunContext, model, criterion, optimizer, scheduler, early_stoppin
     train_loader, eval_loader = prepare_data(ctx, batch_size=args.batch_size)
     train_loss = list(train_loss) if train_loss is not None else list()
     for epoch in range(start_epoch, num_epoch):
+        # DistributedSampler(world_size>1のみ設定される。lib/trainer/data.py)は
+        # epochごとにset_epochしないと全epochで同じrank分割・同じシャッフルになるため必須。
+        if isinstance(train_loader.sampler, DistributedSampler):
+            train_loader.sampler.set_epoch(epoch)
         model, train_epoch_loss, grad_norm = train_epoch(ctx, model, train_loader, criterion, optimizer, epoch)
         scheduler.step(epoch)
         # SimSiam: hold the predictor at a constant LR (fix-pred-lr; not decayed).
