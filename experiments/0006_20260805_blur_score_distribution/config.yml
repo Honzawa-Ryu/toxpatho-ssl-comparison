@@ -1,0 +1,19 @@
+# ============================================================
+# Experiment Configuration
+# ============================================================
+# - Fixed hyperparameters go here.
+# - Variable dimensions (model, seed, prompt, ...) go in run_slurm.sh GRID_ARGS.
+# - Do NOT hardcode values you intend to sweep.
+# ============================================================
+
+# --- Hyperparameters ---
+seed: 42
+
+# --- Blur score distribution analysis ---
+# 既に0002/0003/0005でcoords h5に追記済みのblur_score(ラプラシアン分散)を全WSI分
+# 集計し、閾値方針(global/per_slide)を決めるための分布・統計量を出す。
+# 新規にWSI/パッチを読み直さない(coords h5のblur_scoreを読むだけ)ので軽量。
+blur_dist:
+  coords_dir: data/trident_processed/20x_224px_0px_overlap/patches
+  # 「極端にぼやけているものを除く」の候補として検討する下位カット percentile(%)。
+  candidate_percentiles: [1, 5, 10, 20]
