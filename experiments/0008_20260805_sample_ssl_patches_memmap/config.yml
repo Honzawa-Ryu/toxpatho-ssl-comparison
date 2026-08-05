@@ -1,0 +1,24 @@
+# ============================================================
+# Experiment Configuration
+# ============================================================
+# - Fixed hyperparameters go here.
+# - Variable dimensions (model, seed, prompt, ...) go in run_slurm.sh GRID_ARGS.
+# - Do NOT hardcode values you intend to sweep.
+# ============================================================
+
+# --- Hyperparameters ---
+seed: 42
+
+# --- Sample SSL patches to shared memmap ---
+# 0006(blur_score_distribution)で「44813が閾値p10(388.61)だと1000枚に届かない」
+# ことが分かったため、44813で丁度上位1000枚になる値(360.13690185546875、全体の
+# 下位約8.84%カット相当)を全WSI統一のグローバル閾値として採用する
+# (このthresholdなら1000 WSI全てでn_patches_per_wsi=1000枚を確保できることを
+# 事前スキャンで確認済み)。
+sample:
+  coords_dir: data/trident_processed/20x_224px_0px_overlap/patches
+  wsi_dir: data/raw_slide
+  patch_size: 224
+  n_patches_per_wsi: 1000
+  threshold: 360.13690185546875
+  output_dir: data/ssl_patches
