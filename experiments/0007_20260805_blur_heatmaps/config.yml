@@ -1,0 +1,42 @@
+# ============================================================
+# Experiment Configuration
+# ============================================================
+# - Fixed hyperparameters go here.
+# - Variable dimensions (model, seed, prompt, ...) go in run_slurm.sh GRID_ARGS.
+# - Do NOT hardcode values you intend to sweep.
+# ============================================================
+
+# --- Hyperparameters ---
+seed: 42
+
+# --- Blur heatmap ---
+# 0006 の集計結果で median blur_score が特に低い10枚・高い10枚について、
+# パッチ位置(coords)ごとの blur_score を空間ヒートマップとして描く。
+# ボケがスライド全体に一様なのか、特定領域に偏っているのかを直接確認する前の
+# 当たりをつけるためのもの。既存のcoords h5(blur_score追記済み)を読むだけ。
+blur_heatmap:
+  coords_dir: data/trident_processed/20x_224px_0px_overlap/patches
+  patch_size: 224
+  wsi_ids:
+    # --- median blur_score が低い10枚(ボケている疑い) ---
+    - "7559"
+    - "7570"
+    - "44813"
+    - "58738"
+    - "58723"
+    - "44132"
+    - "32178"
+    - "70092"
+    - "59464"
+    - "36448"
+    # --- median blur_score が高い10枚 ---
+    - "11762"
+    - "20549"
+    - "71325"
+    - "12861"
+    - "11735"
+    - "20559"
+    - "21008"
+    - "21258"
+    - "21304"
+    - "49716"
