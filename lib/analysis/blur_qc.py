@@ -69,6 +69,94 @@ def _derive_rng(seed: int, wsi_id: str) -> np.random.Generator:
     return np.random.default_rng(np.random.SeedSequence([seed, wsi_hash]))
 
 
+def build_offset_table(wsi_ids: list[str], n_patches_per_wsi: int) -> dict[str, int]:
+    """wsi_idのソート順に、各WSIへ固定サイズのmemmap区間を割り当てる。
+
+    offsetがwsi_idのみから決定的に求まるため、途中で一部WSIをスキップして
+    resumeしても他WSIの区間とはずれない。
+    """
+    return {wsi_id: i * n_patches_per_wsi for i, wsi_id in enumerate(sorted(wsi_ids))}
+
+
+def init_shared_memmap(memmap_path: str, total_n_patches: int, patch_size: int) -> None:
+    """全WSI共有の巨大memmapファイルを確保する。既に存在する場合は何もしない(resume対応)。"""
+    path = Path(memmap_path)
+    if path.exists():
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    mm = np.memmap(path, dtype=np.uint8, mode="w+", shape=(total_n_patches, patch_size, patch_size, 3))
+    mm.flush()
+    del mm
+
+
+def sample_patches_to_shared_memmap(
+    wsi_path: str,
+    coords: np.ndarray,
+    scores: np.ndarray,
+    threshold: float,
+    n_patches: int,
+    patch_size: int,
+    memmap_path: str,
+    total_n_patches: int,
+    offset: int,
+    seed: int,
+) -> list[dict]:
+    """1WSI分: 全体統一のぼやけ閾値でフィルタ + ランダムサンプリングし、
+    全WSI共有の単一memmapのうち自分に割り当てられた
+    `[offset, offset + n_patches)` 区間だけへ書き込む。
+
+    他WSIの区間には触れないため、WSIごとに独立して(並列に)呼んでもよい。
+    閾値通過パッチが n_patches 未満の場合は、水増しせず ValueError にする
+    (呼び出し前に全WSIが n_patches 以上確保できることを確認しておく想定)。
+
+    Args:
+        offset: `build_offset_table` が返す、このWSI専用の書き込み開始行。
+        total_n_patches: 共有memmap全体の行数(全WSI分の合計)。
+
+    Returns:
+        index行のlist(1WSI分、n_patches件)。各要素は
+        `{wsi_id, row, x, y, blur_score}`。
+    """
+    wsi_id = Path(wsi_path).stem
+
+    passed = np.where(scores >= threshold)[0]
+    if len(passed) < n_patches:
+        raise ValueError(
+            f"{wsi_id}: 閾値通過パッチ数 {len(passed)} が n_patches={n_patches} 未満です。"
+            f" 水増しはしないため、呼び出し前に閾値または対象WSIを見直してください。"
+        )
+
+    rng = _derive_rng(seed, wsi_id)
+    selected = rng.choice(passed, size=n_patches, replace=False)
+    sel_coords = coords[selected]
+    sel_scores = scores[selected]
+
+    mm = np.memmap(
+        memmap_path, dtype=np.uint8, mode="r+",
+        shape=(total_n_patches, patch_size, patch_size, 3),
+    )
+    wsi = OpenSlide(wsi_path)
+    try:
+        for i, (x, y) in enumerate(sel_coords):
+            patch = wsi.read_region((int(x), int(y)), 0, (patch_size, patch_size)).convert("RGB")
+            mm[offset + i] = np.array(patch, dtype=np.uint8)
+    finally:
+        wsi.close()
+    mm.flush()
+    del mm
+
+    return [
+        {
+            "row": offset + i,
+            "wsi_id": wsi_id,
+            "x": int(x),
+            "y": int(y),
+            "blur_score": float(score),
+        }
+        for i, ((x, y), score) in enumerate(zip(sel_coords, sel_scores))
+    ]
+
+
 def sample_patches_to_memmap(
     wsi_path: str,
     coords: np.ndarray,

@@ -18,9 +18,12 @@ import numpy as np
 from PIL import Image
 
 from lib.analysis.blur_qc import (
+    build_offset_table,
     compute_blur_scores,
+    init_shared_memmap,
     laplacian_variance,
     sample_patches_to_memmap,
+    sample_patches_to_shared_memmap,
 )
 
 
@@ -146,6 +149,93 @@ class TestSamplePatchesToMemmap(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             with self.assertRaises(ValueError):
                 self._run(tmp, "global", n_patches=3, global_threshold=None)
+
+
+class TestBuildOffsetTable(unittest.TestCase):
+    def test_offsets_follow_sorted_wsi_id_order(self):
+        table = build_offset_table(["b", "a", "c"], n_patches_per_wsi=10)
+        self.assertEqual(table, {"a": 0, "b": 10, "c": 20})
+
+
+class TestInitSharedMemmap(unittest.TestCase):
+    def test_creates_file_with_expected_shape(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "shared.memmap"
+            init_shared_memmap(str(path), total_n_patches=6, patch_size=224)
+            self.assertTrue(path.exists())
+            mm = np.memmap(path, dtype=np.uint8, mode="r", shape=(6, 224, 224, 3))
+            self.assertEqual(mm.shape, (6, 224, 224, 3))
+
+    def test_does_not_overwrite_existing_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "shared.memmap"
+            init_shared_memmap(str(path), total_n_patches=2, patch_size=224)
+            mm = np.memmap(path, dtype=np.uint8, mode="r+", shape=(2, 224, 224, 3))
+            mm[0] = 123
+            mm.flush()
+            del mm
+
+            init_shared_memmap(str(path), total_n_patches=2, patch_size=224)
+
+            mm2 = np.memmap(path, dtype=np.uint8, mode="r", shape=(2, 224, 224, 3))
+            self.assertTrue(np.all(mm2[0] == 123))
+
+
+class TestSamplePatchesToSharedMemmap(unittest.TestCase):
+    def _run(self, memmap_path, wsi_id, threshold, offset, total_n_patches, n_patches=3, seed=42):
+        coords = np.array([[i * 224, 0] for i in range(10)], dtype=np.int32)
+        scores = np.arange(10, dtype=np.float32)  # 0..9, ascending sharpness
+        with mock.patch("lib.analysis.blur_qc.OpenSlide", _FakeOpenSlide):
+            rows = sample_patches_to_shared_memmap(
+                wsi_path=f"{wsi_id}.svs",
+                coords=coords,
+                scores=scores,
+                threshold=threshold,
+                n_patches=n_patches,
+                patch_size=224,
+                memmap_path=memmap_path,
+                total_n_patches=total_n_patches,
+                offset=offset,
+                seed=seed,
+            )
+        return rows
+
+    def test_filters_by_threshold(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            memmap_path = str(Path(tmp) / "shared.memmap")
+            init_shared_memmap(memmap_path, total_n_patches=3, patch_size=224)
+            rows = self._run(memmap_path, "wsi001", threshold=7.0, offset=0, total_n_patches=3)
+            self.assertTrue(all(r["blur_score"] >= 7.0 for r in rows))
+
+    def test_writes_only_own_offset_range(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            memmap_path = str(Path(tmp) / "shared.memmap")
+            total_n = 6
+            init_shared_memmap(memmap_path, total_n_patches=total_n, patch_size=224)
+            self._run(memmap_path, "wsi001", threshold=0.0, offset=3, total_n_patches=total_n, n_patches=3)
+
+            mm = np.memmap(memmap_path, dtype=np.uint8, mode="r", shape=(total_n, 224, 224, 3))
+            # 他WSIの区間(offset未満)は書き込まれていない(ゼロ初期化のまま)。
+            self.assertTrue(np.all(mm[0:3] == 0))
+            # 自分の区間には何かしら書き込まれている。
+            self.assertFalse(np.all(mm[3:6] == 0))
+
+    def test_raises_when_fewer_than_n_patches_pass_threshold(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            memmap_path = str(Path(tmp) / "shared.memmap")
+            init_shared_memmap(memmap_path, total_n_patches=3, patch_size=224)
+            with self.assertRaises(ValueError):
+                self._run(memmap_path, "wsi001", threshold=9.0, offset=0, total_n_patches=3, n_patches=3)
+
+    def test_reproducible_with_same_seed(self):
+        with tempfile.TemporaryDirectory() as tmp1, tempfile.TemporaryDirectory() as tmp2:
+            path1 = str(Path(tmp1) / "shared.memmap")
+            path2 = str(Path(tmp2) / "shared.memmap")
+            init_shared_memmap(path1, total_n_patches=3, patch_size=224)
+            init_shared_memmap(path2, total_n_patches=3, patch_size=224)
+            rows1 = self._run(path1, "wsi001", threshold=0.0, offset=0, total_n_patches=3, seed=42)
+            rows2 = self._run(path2, "wsi001", threshold=0.0, offset=0, total_n_patches=3, seed=42)
+            self.assertEqual([r["x"] for r in rows1], [r["x"] for r in rows2])
 
 
 if __name__ == "__main__":
