@@ -44,7 +44,7 @@ export EXP_NAME="__EXP_NAME__"
 # ⚠️ /scratch 側（SCRATCH_DIR）はジョブ終了時に自動削除されない
 #    （rm -rf の誤削除リスクを避けるため）。出力は自動で /workspace/outputs/
 #    へ回収されるが、SCRATCH_DIR自体は残るので、ディスクを圧迫してきたら
-#    slurm.out に出る警告に従って手動で消すこと（詳細はUSAGE.md 3-2節）。
+#    slurm.out に出る警告に従って手動で消すこと（詳細はdocs/USAGE.md 3-2節）。
 # =====================================================
 
 USE_LOCAL_SSD_INPUT=0

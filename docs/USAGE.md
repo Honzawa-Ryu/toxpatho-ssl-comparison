@@ -2,7 +2,7 @@
 
 このテンプレートを実際に手を動かして使うための実践ガイドです。設計思想は
 [`TEMPLATE_CONCEPT.md`](./TEMPLATE_CONCEPT.md)、関数・スクリプトの一覧リファレンスは
-[`FUNCTIONS.md`](./FUNCTIONS.md)、セットアップ手順は [`README.md`](./README.md) を参照してください。
+[`FUNCTIONS.md`](./FUNCTIONS.md)、セットアップ手順は [`README.md`](../README.md) を参照してください。
 本ドキュメントは「日々の運用でどう使うか」を、特にGit運用・実験管理・実行方法にフォーカスして
 手順ベースで説明します。
 
@@ -23,7 +23,7 @@ Git操作は一切行いません）。
 ```
 
 `gstart`・`gpush` は **ユーザーがホスト側で実行するシェル関数**です。実体は
-[`.bashrc.d/2-git.sh`](./.bashrc.d/2-git.sh) にありますが、このファイル自体は
+[`.bashrc.d/2-git.sh`](../.bashrc.d/2-git.sh) にありますが、このファイル自体は
 テンプレート/capsuleリポジトリ本体には含めない設計です（冒頭コメント参照）。
 自分の `~/.bashrc` など、テンプレート外の個人設定に `source` して使ってください。
 agentはこの2つの存在を知っている必要はありますが、呼び出すことはありません
@@ -447,7 +447,7 @@ capsule内のagentは `runx` を直接実行せず、代わりに投入内容を
 
 | ドキュメント | 内容 |
 |---|---|
-| [`README.md`](./README.md) | セットアップ手順・機能概要 |
+| [`README.md`](../README.md) | セットアップ手順・機能概要 |
 | [`TEMPLATE_CONCEPT.md`](./TEMPLATE_CONCEPT.md) | 設計理念・命名規則・実験ごとの注意事項の運用方法 |
 | [`FUNCTIONS.md`](./FUNCTIONS.md) | シェル関数・Pythonライブラリ・ツールスクリプトの一覧リファレンス |
 | `slurm-agents-capsule/docs/USER_MANUAL.md` | `agentrun`（Apptainer capsule経由でのagent実行）のコマンドリファレンス |
