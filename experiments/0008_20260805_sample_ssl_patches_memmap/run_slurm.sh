@@ -1,8 +1,8 @@
 #!/bin/bash
 #SBATCH --job-name=0008_20260805_sample_ssl_patches_memmap
 #SBATCH --partition=large-creator
-#SBATCH --output=/workspace/logs/0008_20260805_sample_ssl_patches_memmap/%j_0008_20260805_sample_ssl_patches_memmap.out
-#SBATCH --error=/workspace/logs/0008_20260805_sample_ssl_patches_memmap/%j_0008_20260805_sample_ssl_patches_memmap.out
+#SBATCH --output=/workspace/filesrv02/honzawa/01-toxpatho/toxpatho-ssl-comparison/logs/0008_20260805_sample_ssl_patches_memmap/%j_0008_20260805_sample_ssl_patches_memmap.out
+#SBATCH --error=/workspace/filesrv02/honzawa/01-toxpatho/toxpatho-ssl-comparison/logs/0008_20260805_sample_ssl_patches_memmap/%j_0008_20260805_sample_ssl_patches_memmap.out
 #SBATCH --signal=B:USR1@108
 #SBATCH --export=ALL
 #SBATCH --nodes=1
@@ -17,8 +17,8 @@
 
 # Array run にする場合、上の3行の --output/--error/この直後の --array を
 # 以下の2行に置き換える（%j→%A_%a、--array=0-N を追加。Nの決め方は下記参照）:
-# #SBATCH --output=/workspace/logs/0008_20260805_sample_ssl_patches_memmap/%A_%a_0008_20260805_sample_ssl_patches_memmap.out
-# #SBATCH --error=/workspace/logs/0008_20260805_sample_ssl_patches_memmap/%A_%a_0008_20260805_sample_ssl_patches_memmap.out
+# #SBATCH --output=/workspace/filesrv02/honzawa/01-toxpatho/toxpatho-ssl-comparison/logs/0008_20260805_sample_ssl_patches_memmap/%A_%a_0008_20260805_sample_ssl_patches_memmap.out
+# #SBATCH --error=/workspace/filesrv02/honzawa/01-toxpatho/toxpatho-ssl-comparison/logs/0008_20260805_sample_ssl_patches_memmap/%A_%a_0008_20260805_sample_ssl_patches_memmap.out
 # #SBATCH --array=0-N
 #
 # ⚠️ 注意: リソース(--gres/--cpus-per-task/--mem/--time)を変更したら、
@@ -27,7 +27,7 @@
 # ⚠️ 注意: シェル上での for/while ループによる複数組み合わせ実行は推奨しない。
 #          下記の Array run / Seq run の使用を推奨。
 
-export PROJECT_ROOT="/workspace"
+export PROJECT_ROOT="/workspace/filesrv02/honzawa/01-toxpatho/toxpatho-ssl-comparison"
 export EXP_NAME="0008_20260805_sample_ssl_patches_memmap"
 
 # =====================================================
