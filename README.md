@@ -172,7 +172,7 @@ cancelx <job_id> <reason>
 `experiments/<id>_.../CLAUDE.md` や `experiments/<id>_.../.claude/skills/` を置くと、
 その実験を触っている間だけ有効な追加ルール・専用スキルとして機能します
 （Claude Codeがサブディレクトリ単位で自動的にlazy-loadする標準機能で、agent設定側の変更は不要）。
-詳細は [`TEMPLATE_CONCEPT.md`](./TEMPLATE_CONCEPT.md#4-実験ごとに独自のルール・スキルを持たせるオプトイン) を参照。
+詳細は [`TEMPLATE_CONCEPT.md`](./docs/TEMPLATE_CONCEPT.md#4-実験ごとに独自のルール・スキルを持たせるオプトイン) を参照。
 
 ---
 
