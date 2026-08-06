@@ -1,0 +1,27 @@
+# ============================================================
+# Experiment Configuration
+# ============================================================
+# - Fixed hyperparameters go here.
+# - Variable dimensions (model, seed, prompt, ...) go in run_slurm.sh GRID_ARGS.
+# - Do NOT hardcode values you intend to sweep.
+# ============================================================
+
+# --- Hyperparameters ---
+seed: 42
+
+# --- Multi-GPU (DDP) training smoke test ---
+# EXP9(0009_20260805_lerning_test)の単一GPU版と同じ発想: data/ssl_patches
+# (EXP8で作る生パッチmemmap)がまだ無いので、data/features_memmap_output/{slide_id}/
+# features.dat(shape (1000, 1024) float32のUNI特徴量memmap)を1つ選び、全rankで
+# 共有してDistributedSamplerで行分割する(lib/trainer/data.pyの本番パターンと同じ)。
+# 目的はDDPの配線(lib/trainer/distributed.py: init_process_group/DistributedSampler/
+# DDP wrap/gather_distributed付きBarlowTwinsLoss)が実際に1ノード複数GPUで通るかの確認。
+train_test:
+  memmap_dir: null  # slide_id under data/features_memmap_output/; null = auto-pick the first one found
+  hidden_dim: 512
+  proj_dim: 128
+  batch_size: 64
+  num_epochs: 3
+  lr: 0.001
+  noise_std: 0.1
+  feature_dropout_p: 0.2

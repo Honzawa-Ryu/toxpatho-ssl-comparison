@@ -1,0 +1,24 @@
+# ============================================================
+# Experiment Configuration
+# ============================================================
+# - Fixed hyperparameters go here.
+# - Variable dimensions (model, seed, prompt, ...) go in run_slurm.sh GRID_ARGS.
+# - Do NOT hardcode values you intend to sweep.
+# ============================================================
+
+# --- Hyperparameters ---
+seed: 42
+
+# --- Single-GPU training smoke test ---
+# data/ssl_patches (raw-patch memmap, produced by EXP8) doesn't exist yet, so this
+# test trains on one of the per-slide UNI feature memmaps already sitting under
+# data/features_memmap_output/{slide_id}/features.dat (shape (1000, 1024) float32).
+train_test:
+  memmap_dir: null  # slide_id under data/features_memmap_output/; null = auto-pick the first one found
+  hidden_dim: 512
+  proj_dim: 128
+  batch_size: 64
+  num_epochs: 3
+  lr: 0.001
+  noise_std: 0.1
+  feature_dropout_p: 0.2

@@ -1,0 +1,31 @@
+# ============================================================
+# Experiment Configuration
+# ============================================================
+# - Fixed hyperparameters go here.
+# - Variable dimensions (model, seed, prompt, ...) go in run_slurm.sh GRID_ARGS.
+# - Do NOT hardcode values you intend to sweep.
+# ============================================================
+
+# --- Hyperparameters ---
+seed: 42
+
+# --- Real image-backbone training smoke test ---
+# EXP9/EXP11はdata/features_memmap_output(抽出済みUNI特徴量)を使ったため、
+# バックボーンは自前の小さいMLPだった。今回は本物の画像バックボーン
+# (lib/model/zoo.py の DICT_MODEL、既定ResNet18)と本物のSSL拡張パイプライン
+# (lib/sslmodel/utils.py の ssl_transform / TwoCropsTransform)を使う。
+#
+# ただし data/ssl_patches (実パッチmemmap、EXP8が作る予定) はまだ存在しないため、
+# 画像は合成ランダムパッチ(uint8 patch_size x patch_size x 3)で代用する
+# (run_dir配下に都度生成。実データではないことに注意)。
+train_test:
+  model_name: ResNet18   # lib/model/zoo.py の DICT_MODEL のキー(ResNet18/ResNet50/ViTB16/ConvNextTiny/DenseNet121 等)
+  pretrained: false      # true にすると torchvision の ImageNet weights をダウンロードしようとする(計算ノードにネット接続が無いと失敗する)
+  n_synthetic_patches: 512
+  patch_size: 224
+  batch_size: 32
+  num_epochs: 20
+  lr: 0.001
+  color_plob: 0.8
+  blur_plob: 0.4
+  solar_plob: 0.0
