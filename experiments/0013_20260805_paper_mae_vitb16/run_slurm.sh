@@ -84,6 +84,18 @@ export WANDB_MODE=offline
 export OMP_NUM_THREADS=1
 export PYTHONPATH="${PROJECT_ROOT}:${PYTHONPATH:-}"
 
+# job 8286で実測: DDP初期化直後の最初のcollective(NCCL ALLGATHER, ごく小さいメタデータ)
+# が10分(NCCLデフォルトwatchdog timeout)でタイムアウトしてrank0/1ともSIGABRT。
+# nvidia-smi topo -m ではGPU0-3間は全ペア"NODE"(NVLink無し、PCIe+ホストブリッジ経由)で
+# 差が無く、特定ペアのハードウェア的トポロジ問題ではなさそう
+# (EXP11の小さいMLPでは同じtorchrun/DDP経路が正常に完走している)。
+# apptainerコンテナ内でのP2P(GPU間直接DMA)がうまく機能していない可能性が高いため、
+# NCCL_P2P_DISABLE=1でホストメモリ経由のフォールバック経路を強制する
+# (帯域は落ちるが、2GPU・step毎のgrad all-reduce程度なら許容範囲)。
+# NCCL_DEBUG=INFOはこれでも直らない場合の追加診断用。
+export NCCL_P2P_DISABLE=1
+export NCCL_DEBUG=INFO
+
 # =====================================================
 # Storage
 # /workspace はNFS（遅い）、/scratch はノード付属のm.2 SSD（速い）。
@@ -100,16 +112,20 @@ export PYTHONPATH="${PROJECT_ROOT}:${PYTHONPATH:-}"
 #    slurm.out に出る警告に従って手動で消すこと（詳細はdocs/USAGE.md 3-2節）。
 # =====================================================
 
-USE_LOCAL_SSD_INPUT=0
+# job 8284で実測: patches.memmap(141GB)をNFS越しにshuffle=Trueでランダム読みすると
+# DataLoaderのプリフェッチが枯渇 → 片方のrankがDDP all_reduceで待たされる、が
+# 周期的に発生し1step平均が本来の4〜5倍(floor ~1.7-2s/it vs 観測平均~8s/it)に
+# 悪化していた。ssl_patchesだけノードローカルSSDへ一度rsyncしてから読むよう変更。
+# あわせて lib/trainer/data.py の prepare_data() が DATASET_DIR を見ていなかった
+# バグを修正済み(このrun_slurm.shの変更だけでは効かなかった状態だった)。
+USE_LOCAL_SSD_INPUT=1
 USE_LOCAL_SSD_OUTPUT=1
 
 # USE_LOCAL_SSD_INPUT=1 にする場合のみ、コピー対象を列挙する
 # （data/ からの相対パス。空のままだと data/ 全体をコピーする後方互換動作になる）。
-# 例:
-# DATA_SUBDIRS=(
-#     "trident_processed/20x_224px_0px_overlap"
-# )
-DATA_SUBDIRS=()
+DATA_SUBDIRS=(
+    "ssl_patches"
+)
 
 # =====================================================
 # python path

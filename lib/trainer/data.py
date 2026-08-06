@@ -15,6 +15,7 @@ EXP8: experiments/0008_20260805_sample_ssl_patches_memmap が新形式の
 （REFACTOR_PLAN.md §6-4 の "分散学習に移行する際は split_by_node 等を足す"
 に対応）。
 """
+import os
 from pathlib import Path
 
 import numpy as np
@@ -89,7 +90,7 @@ def split_wsi_ids_by_fold(wsi_ids: np.ndarray, fold_idx: int, num_folds: int) ->
 
 def prepare_data(
     ctx: RunContext,
-    data_dir: str = "data/ssl_patches",
+    data_dir: str | None = None,
     patch_size: int = 224,
     fold_idx: int = 0,
     num_folds: int = 5,
@@ -99,7 +100,16 @@ def prepare_data(
 
     WSI 単位で分割するのは、同じ WSI 由来のパッチが train/val 両方に混ざって
     リークするのを避けるため（旧 shard 版の「shard 単位で fold 分割」と同じ考え方）。
+
+    `data_dir` 省略時は `${DATASET_DIR}/ssl_patches` を使う。DATASET_DIR は
+    scripts/slurm_entry.sh が USE_LOCAL_SSD_INPUT の有無に関わらず常に export する
+    (0なら${PROJECT_ROOT}/data、1ならノードローカルSSDへrsync済みのコピー)。
+    これまでこの関数がDATASET_DIRを見ずdata_dirを常にリポジトリ直下の相対パス
+    "data/ssl_patches"に固定していたため、USE_LOCAL_SSD_INPUT=1にしても実際には
+    NFS(${PROJECT_ROOT}/data/ssl_patches)を読み続けてしまうバグがあった。
     """
+    if data_dir is None:
+        data_dir = str(Path(os.environ.get("DATASET_DIR", "data")) / "ssl_patches")
     args = ctx.args
     index_df = load_index_table(data_dir)
     memmap_path = str(Path(data_dir) / "patches.memmap")
