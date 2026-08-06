@@ -48,6 +48,10 @@ torch = [
     "accelerate",
     "trl",
     "peft",
+    # lib/sslmodel/models/{mae,dino}.py・lib/trainer/model.py(CosineLRScheduler)・
+    # lib/model/zoo.py(UNI foundation model)が使う。宣言漏れで
+    # `import lib.sslmodel.sslutils` が ModuleNotFoundError になっていた。
+    "timm",
     "evaluate",
     "bitsandbytes",
     "safetensors",

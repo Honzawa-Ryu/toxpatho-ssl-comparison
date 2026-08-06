@@ -15,3 +15,4 @@ unset BASH_DIR
 if _is_interactive_shell 2>/dev/null && ! command -v jq >/dev/null 2>&1; then
     echo "⚠️  jq が見つかりません。Slack通知が動作しません。" >&2
 fi
+export SIF_PATH="./env.sif"
