@@ -182,7 +182,16 @@ class DINO(nn.Module):
         return outs
 
     def forward(self, x):
-        """Single-view student projection (used by SSLEvaluator / featurize)."""
+        """Single-view student projection (used by SSLEvaluator / featurize).
+
+        Also accepts a list/tuple of views (multicrop) and dispatches to
+        forward_student, so that DDP-wrapped calls (`ddp_model(views)`) go
+        through DistributedDataParallel.forward() and get gradient-sync hooks
+        armed for the backward pass (calling forward_student directly on the
+        unwrapped .module bypasses those hooks -> silently un-synced grads).
+        """
+        if isinstance(x, (list, tuple)):
+            return self.forward_student(x)
         return self.student_head(self.student_backbone(x))
 
     def forward_student(self, views):

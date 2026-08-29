@@ -416,7 +416,23 @@ class DINO:
     def calc_loss(self, model, data, criterion):
         views = [v.to(self.DEVICE) for v in data]
         global_views = views[:self.n_global_crops]
-        student_out = model.forward_student(views)
-        teacher_out = model.forward_teacher(global_views)
+        # student側は勾配が必要なので model(views) で呼ぶ(DDPラップ時は
+        # DistributedDataParallel.forward()経由になり、backward時の勾配同期
+        # フックが正しく起動する。DINO.forward()はlist/tupleを渡すと
+        # forward_studentへdispatchする実装にしてある)。
+        # DDPは任意属性を .module へ転送しないため、ラップ後のmodelに対して
+        # model.forward_student(...) と直接呼ぶと AttributeError で即死する
+        # (2026-08-10、0017の4ノードジョブ(2513399)で実機確認:
+        #  "AttributeError: 'DistributedDataParallel' object has no attribute
+        #  'forward_student'" が全rankで発生しepoch 1に到達せず終了)。
+        # また仮に unwrap() 経由で forward_student を直接呼ぶと、今度はDDPの
+        # 勾配同期フックをバイパスして各rankが同期されないまま独立に学習する
+        # 静かなバグになるため、student側は必ず model(views) で呼ぶこと。
+        # teacher側は@torch.no_grad()で勾配を持たずDDP同期が不要なため、
+        # unwrap()した生モジュールを呼ぶ(cancel_last_layer_gradients/
+        # update_moving_averageと同じパターン。単一プロセス実行では
+        # unwrap()はno-opでmodelをそのまま返す)。
+        student_out = model(views)
+        teacher_out = distributed.unwrap(model).forward_teacher(global_views)
         loss = criterion(student_out, teacher_out)
         return loss
