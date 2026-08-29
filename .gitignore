@@ -234,3 +234,6 @@ experiments/*/uncommitted_changes.diff
 .agentrun.lock
 experiments/before_refactor/*
 __pycache__/
+.bashrc
+# wandb local run data
+wandb/
