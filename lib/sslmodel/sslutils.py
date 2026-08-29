@@ -373,17 +373,25 @@ class DINO:
     def prepare_model(self, backbone=None, head_size: int = 768,
                       out_dim: int = 8192, momentum: float = 0.9995,
                       teacher_temp: float = 0.04, student_temp: float = 0.1,
-                      freeze_last_layer_epochs: int = 1):
+                      freeze_last_layer_epochs: int = 1,
+                      momentum_end=None, teacher_temp_end=None,
+                      teacher_temp_warmup_epochs: int = 30):
         # anti-collapse defaults: smaller head (8192), slower EMA teacher (0.9995),
         # and last-layer freezing for the first epoch (see DINO.cancel_last_layer_gradients).
+        # momentum_end / teacher_temp_end は既定 None = 固定運用(0017と同一)。
+        # 指定すると論文(Caron et al. 2021)のcosine/linearスケジュールが有効になる
+        # (どちらか片方だけ有効にできるので、崩壊要因の切り分けに使える)。
         self.out_dim = out_dim
         model = dino.DINO(
             backbone_name="vit_base_patch16_224", out_dim=out_dim,
             momentum=momentum, n_global_crops=self.n_global_crops,
             n_local_crops=self.n_local_crops,
-            freeze_last_layer_epochs=freeze_last_layer_epochs)
+            freeze_last_layer_epochs=freeze_last_layer_epochs,
+            momentum_end=momentum_end)
         criterion = dino.DINOLoss(
-            out_dim=out_dim, teacher_temp=teacher_temp, student_temp=student_temp)
+            out_dim=out_dim, teacher_temp=teacher_temp, student_temp=student_temp,
+            teacher_temp_end=teacher_temp_end,
+            teacher_temp_warmup_epochs=teacher_temp_warmup_epochs)
         criterion.to(self.DEVICE)
         model.to(self.DEVICE)
         return model, criterion

@@ -15,6 +15,8 @@ enabled via `n_local_crops` if desired.
 
 @author: wsi-ad
 """
+import math
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -67,12 +69,50 @@ class DINOLoss(nn.Module):
     """Cross-entropy between centered+sharpened teacher and student outputs."""
 
     def __init__(self, out_dim=65536, teacher_temp=0.04, student_temp=0.1,
-                 center_momentum=0.9):
+                 center_momentum=0.9, teacher_temp_end=None,
+                 teacher_temp_warmup_epochs=30):
+        """teacher_temp_end=None なら teacher_temp 固定(0017の運用、既定)。
+
+        teacher_temp_end を指定すると論文(Caron et al. 2021)の線形warmup
+        (teacher_temp -> teacher_temp_end を warmup_epochs かけて、以降は
+        teacher_temp_end 固定)が有効になる。低いteacher温度=強いsharpening
+        は崩壊回避方向に働くため、0.04固定は意図的なanti-collapse設定
+        (0021でこれを論文値に寄せた際にepoch15で恒久崩壊した経緯があるため、
+        既定はあくまで固定運用のままにしてopt-inにしてある)。
+        """
         super().__init__()
         self.student_temp = student_temp
+        self.teacher_temp_start = teacher_temp
         self.teacher_temp = teacher_temp
+        self.teacher_temp_end = teacher_temp_end
+        self.teacher_temp_warmup_epochs = teacher_temp_warmup_epochs
+        self.teacher_temp_warmup_steps = 0
         self.center_momentum = center_momentum
         self.register_buffer("center", torch.zeros(1, out_dim))
+
+    def set_schedule(self, niter_per_ep: int):
+        """niter_per_ep(1epochあたりのstep数)が判明してから呼ぶ。
+
+        モデル構築時点ではデータローダー未生成でniter_per_epが不明なため、
+        epoch単位で受け取ったwarmup長をここでstep数へ変換する。
+        """
+        self.teacher_temp_warmup_steps = self.teacher_temp_warmup_epochs * niter_per_ep
+
+    def update_teacher_temp(self, step: int):
+        """global step(resumeを跨いだ通算step)から現在のteacher_tempを設定する。
+
+        stepの純関数として毎回再計算するため、resume時にself.teacher_temp自体を
+        永続化・復元する必要がない(warmup途中で再開しても正しい値になる)。
+        teacher_temp_end=None(既定)なら何もしない。
+        """
+        if self.teacher_temp_end is None:
+            return
+        if self.teacher_temp_warmup_steps <= 0:
+            self.teacher_temp = self.teacher_temp_end
+            return
+        progress = min(1.0, step / self.teacher_temp_warmup_steps)
+        self.teacher_temp = self.teacher_temp_start + \
+            (self.teacher_temp_end - self.teacher_temp_start) * progress
 
     def forward(self, student_outputs, teacher_outputs):
         """student_outputs / teacher_outputs: list of tensors (one per view)."""
@@ -122,9 +162,19 @@ class DINO(nn.Module):
 
     def __init__(self, backbone_name="vit_base_patch16_224", out_dim=8192,
                  momentum=0.9995, norm_last_layer=True, n_global_crops=2,
-                 n_local_crops=0, freeze_last_layer_epochs=1):
+                 n_local_crops=0, freeze_last_layer_epochs=1, momentum_end=None):
+        """momentum_end=None なら momentum 固定(0017の運用、既定)。
+
+        momentum_end を指定すると論文のcosineスケジュール
+        (momentum -> momentum_end)が有効になる。momentumが小さいほど
+        teacherがstudentを速く追従する(0.996は0.9995の約12.5倍速い)ため、
+        0.9995固定は意図的なanti-collapse設定。DINOLossのteacher温度と同様、
+        既定は固定運用のままでopt-inにしてある。
+        """
         super().__init__()
+        self.momentum_start = momentum
         self.momentum = momentum
+        self.momentum_end = momentum_end
         self.n_global_crops = n_global_crops
         self.n_local_crops = n_local_crops
         self.freeze_last_layer_epochs = freeze_last_layer_epochs
@@ -158,6 +208,20 @@ class DINO(nn.Module):
             return
         for p in self.student_head.last_layer.parameters():
             p.grad = None
+
+    def update_teacher_momentum(self, step: int, total_steps: int):
+        """global step(resumeを跨いだ通算step)から現在のmomentumをcosineで設定する。
+
+        DINOLoss.update_teacher_tempと同様、stepの純関数として毎回再計算する
+        のでresume安全(self.momentumはstate_dictに含まれない通常のfloat属性な
+        ため、永続化に頼らずここで再計算する)。momentum_end=None(既定)なら
+        何もしない。
+        """
+        if self.momentum_end is None:
+            return
+        progress = min(1.0, step / max(1, total_steps))
+        self.momentum = self.momentum_end - 0.5 * (self.momentum_end - self.momentum_start) * \
+            (1 + math.cos(math.pi * progress))
 
     @torch.no_grad()
     def update_moving_average(self):

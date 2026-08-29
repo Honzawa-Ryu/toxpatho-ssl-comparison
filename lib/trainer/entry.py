@@ -85,6 +85,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument('--lr_bias', type=float, default=0.0)          # Barlow Twins: separate LR for biases/BN params (0 = same as --lr)
     parser.add_argument('--lars_exclude_bias_bn', action='store_true') # LARS: exclude bias/BN (ndim<=1) from adaptation + weight decay
     parser.add_argument('--weight_decay_end', type=float, default=0.0) # DINO: cosine wd schedule end (0 = fixed weight_decay)
+    # DINO teacher schedules. 既定(None)は 0017 と同じ固定値運用
+    # (momentum 0.9995 / teacher_temp 0.04、意図的なanti-collapse設定)。
+    # 指定すると論文(Caron et al. 2021)のスケジュールが有効になる。
+    # 片方だけ有効にできるので、0021の恒久崩壊がどちらに起因するかを切り分けられる。
+    parser.add_argument('--dino_momentum_start', type=float, default=None)        # 論文: 0.996。未指定なら 0.9995 (0017のanti-collapse値)
+    parser.add_argument('--dino_momentum_end', type=float, default=None)          # 論文: 1.0 (cosine start->1.0)。未指定なら momentum 固定
+    parser.add_argument('--dino_teacher_temp_end', type=float, default=None)      # 論文: 0.07 (linear warmup 0.04->0.07)。未指定なら teacher_temp 固定
+    parser.add_argument('--dino_teacher_temp_warmup_epochs', type=int, default=30) # 論文: 30 epoch
     parser.add_argument('--n_prototypes', type=int, default=512)       # SwAV: number of prototypes (paper: 3000)
     parser.add_argument('--n_global_crops', type=int, default=2)       # multicrop global views
     parser.add_argument('--n_local_crops', type=int, default=0)        # multicrop local views (SwAV 6 / DINO 8); 0 = disabled

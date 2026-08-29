@@ -21,12 +21,22 @@ from lib.trainer.data import prepare_data
 
 # train epoch
 
-def train_epoch(ctx: RunContext, model, data_loader, criterion, optimizer, epoch):
+def train_epoch(ctx: RunContext, model, data_loader, criterion, optimizer, epoch, num_epoch=None):
     ssl_class = ctx.ssl_class
     model.train()
     train_batch_loss = []
     grad_norms = []
-    for data in tqdm(data_loader, desc=f"Epoch {epoch + 1}"):
+    # DINOのteacher momentum/温度スケジュールはstep単位で更新する(論文と同じ粒度)。
+    # 通算stepの純関数として計算するのでresume時も正しい値になる。
+    niter_per_ep = len(data_loader)
+    total_steps = (num_epoch or 0) * niter_per_ep
+    for i, data in enumerate(tqdm(data_loader, desc=f"Epoch {epoch + 1}")):
+        global_step = epoch * niter_per_ep + i
+        raw = distributed.unwrap(model)
+        if hasattr(raw, 'update_teacher_momentum'):
+            raw.update_teacher_momentum(global_step, total_steps)
+        if hasattr(criterion, 'update_teacher_temp'):
+            criterion.update_teacher_temp(global_step)
         optimizer.zero_grad(set_to_none=True)
         with torch.amp.autocast(device_type="cuda", dtype=torch.bfloat16):
             loss = ssl_class.calc_loss(model, data, criterion)
@@ -109,13 +119,18 @@ def train(ctx: RunContext, model, criterion, optimizer, scheduler, early_stoppin
     start = time.time()
     evaluator = ssl_eval.SSLEvaluator(samples_n=2048, uniformity_samples=512)
     train_loader, eval_loader = prepare_data(ctx, batch_size=args.batch_size)
+    # teacher温度warmupはepoch単位で指定されるが更新はstep単位のため、
+    # niter_per_ep が判明したここでstep数へ変換しておく(DINO以外はno-op)。
+    if hasattr(criterion, 'set_schedule'):
+        criterion.set_schedule(len(train_loader))
     train_loss = list(train_loss) if train_loss is not None else list()
     for epoch in range(start_epoch, num_epoch):
         # DistributedSampler(world_size>1のみ設定される。lib/trainer/data.py)は
         # epochごとにset_epochしないと全epochで同じrank分割・同じシャッフルになるため必須。
         if isinstance(train_loader.sampler, DistributedSampler):
             train_loader.sampler.set_epoch(epoch)
-        model, train_epoch_loss, grad_norm = train_epoch(ctx, model, train_loader, criterion, optimizer, epoch)
+        model, train_epoch_loss, grad_norm = train_epoch(
+            ctx, model, train_loader, criterion, optimizer, epoch, num_epoch=num_epoch)
         scheduler.step(epoch)
         # SimSiam: hold the predictor at a constant LR (fix-pred-lr; not decayed).
         if args.fix_pred_lr:
@@ -132,9 +147,19 @@ def train(ctx: RunContext, model, criterion, optimizer, scheduler, early_stoppin
                     g['weight_decay'] = wd
         train_loss.append(train_epoch_loss)
         current_lr = optimizer.param_groups[0]['lr']
+        # DINOのteacher momentum/温度は「スケジュールを有効にしたつもりで実は
+        # 更新配線が無く固定のままだった」という事故が起きうる(0021の実装は
+        # 更新呼び出し側が失われており、実際に適用されていたか事後検証できない)。
+        # 毎epochの実測値をログに残して、後から適用状況を確認できるようにする。
+        _raw = distributed.unwrap(model)
+        teacher_state = ''
+        if hasattr(_raw, 'momentum'):
+            teacher_state += f', teacher_momentum: {_raw.momentum:.6f}'
+        if hasattr(criterion, 'teacher_temp'):
+            teacher_state += f', teacher_temp: {criterion.teacher_temp:.4f}'
         LOGGER.logger.info(
             f'Epoch: {epoch + 1}, train_loss: {train_epoch_loss:.4f}, '
-            f'lr: {current_lr:.2e}, grad_norm: {grad_norm:.4f}'
+            f'lr: {current_lr:.2e}, grad_norm: {grad_norm:.4f}{teacher_state}'
         )
         LOGGER.logger.info('elapsed_time: {:.2f} min'.format((time.time() - start)/60))
         if run:

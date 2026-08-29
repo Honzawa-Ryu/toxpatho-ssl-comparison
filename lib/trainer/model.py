@@ -89,6 +89,13 @@ def prepare_model(
     if args.ssl_name == "barlowtwins" and args.proj_dim > 0:
         model_kwargs["projection_dim"] = args.proj_dim
         model_kwargs["pred_dim"] = args.proj_dim
+    if args.ssl_name == "dino":
+        # None のまま渡せば prepare_model 側で固定運用(0017と同一)になる。
+        if args.dino_momentum_start is not None:
+            model_kwargs["momentum"] = args.dino_momentum_start
+        model_kwargs["momentum_end"] = args.dino_momentum_end
+        model_kwargs["teacher_temp_end"] = args.dino_teacher_temp_end
+        model_kwargs["teacher_temp_warmup_epochs"] = args.dino_teacher_temp_warmup_epochs
     model, criterion = ssl_class.prepare_model(backbone, head_size=size, **model_kwargs)
     if args.model_path:
         # warm start: load weights only (student+teacher, via model.state_dict()) from a
