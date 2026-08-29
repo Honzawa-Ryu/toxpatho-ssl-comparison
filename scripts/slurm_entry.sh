@@ -764,15 +764,18 @@ EOF
     # なる(2026-08-09、DINO 4ノードジョブ(2508476)で実機確認: 4タスク全部が
     # `exit status 1` でも pbsdsh 自体は正常終了し、run_metadata.yamlの
     # statusが実際は失敗しているのに COMPLETED と誤記録された)。そのため
-    # `wait`の終了コードを鵜呑みにせず、出力中の `exit status <非ゼロ>` を
+    # pbsdsh自体の終了コードを鵜呑みにせず、出力中の `exit status <非ゼロ>` を
     # 自前で検出してcodeへ反映する。
+    #
+    # パイプを `&` でバックグラウンド化して `$!`/`wait` で終了コードを拾うと、
+    # `$!` は パイプの最後の要素(tee、常に0で終わる)のPIDを指してしまい、
+    # pbsdsh自体の起動失敗(bad node、認証エラー等、exit statusログすら
+    # 出ないケース)を検知できなくなる。バックグラウンド化せず、
+    # `PIPESTATUS[0]` からpbsdsh自身の終了コードを直接取得する。
     local pbsdsh_log="${JOB_LOG_DIR}/_pbsdsh_output.log"
-    pbsdsh -v -- bash "${launcher_script}" 2>&1 | tee "${pbsdsh_log}" 1>&2 &
+    pbsdsh -v -- bash "${launcher_script}" 2>&1 | tee "${pbsdsh_log}" 1>&2
 
-    local pid=$!
-    local code=0
-
-    wait ${pid} || code=$?
+    local code=${PIPESTATUS[0]}
 
     if grep -qE "exit status [1-9]" "${pbsdsh_log}"; then
         echo "❌ multi-node: 1つ以上のノードでタスクが失敗しました(pbsdshのexit statusを検出)" >&2

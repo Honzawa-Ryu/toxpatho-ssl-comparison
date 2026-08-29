@@ -222,5 +222,8 @@ def train(ctx: RunContext, model, criterion, optimizer, scheduler, early_stoppin
                     f'Collapse detected (effective_rank < {args.collapse_rank_threshold} for '
                     f'{args.collapse_patience} consecutive checks) at Epoch: {epoch} — aborting to save compute'
                 )
+                # early_stopping.path (best val_loss checkpoint.pt) still holds the last
+                # pre-collapse snapshot; restore it so model_ssl.pt isn't the collapsed weights.
+                distributed.unwrap(model).load_state_dict(torch.load(early_stopping.path))
                 return model, train_loss, True
     return model, train_loss, True
