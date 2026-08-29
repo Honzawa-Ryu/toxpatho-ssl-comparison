@@ -96,7 +96,13 @@ def prepare_model(
         # are NOT restored, so this run gets a fresh schedule (e.g. continuing 0017 past
         # its original epoch budget with a new cosine cycle instead of a flat lr_min tail).
         model.load_state_dict(torch.load(args.model_path, map_location=ctx.device))
-        print(f"warm-started model weights from {args.model_path}")
+        if args.resume:
+            # entry.py's resume path (state.pt found) loads its own model_state_dict right
+            # after prepare_model() returns, silently discarding these warm-started weights.
+            print(f"warm-started model weights from {args.model_path}, but --resume is also set: "
+                  f"if {ctx.dir_name}/state.pt exists, its weights will override this warm start")
+        else:
+            print(f"warm-started model weights from {args.model_path}")
     if args.optimizer == "lars" and args.lars_exclude_bias_bn:
         # Barlow Twins / SwAV: weights (LARS-adapted, weight-decayed) vs bias & BN
         # (ndim<=1: excluded from LARS adaptation and weight decay, own LR).

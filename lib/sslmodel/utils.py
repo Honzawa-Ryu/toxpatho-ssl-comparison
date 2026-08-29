@@ -466,7 +466,10 @@ class CollapseMonitor:
         self.collapsed = False
 
     def update(self, effective_rank):
-        if effective_rank is None:
+        # NaN (e.g. from a diverged/collapsed run whose SVD blows up) must be treated
+        # like None here: `NaN < threshold` is always False in Python, so without this
+        # check a NaN reading would silently reset the counter instead of being ignored.
+        if effective_rank is None or np.isnan(effective_rank):
             return
         if effective_rank < self.rank_threshold:
             self.counter += 1

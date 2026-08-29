@@ -629,7 +629,20 @@ _run_single() {
 
 _run_multi_node() {
     local cmd="$1"
-    local payload="${cmd#python }"
+
+    # 先頭の "python "/"python3 "/"python3.11 " 等のインタプリタ呼び出し部分だけを
+    # 剥がす。単純な `${cmd#python }` は文字列 "python " の完全一致しか剥がせず、
+    # RUN_COMMAND が "python3 ..." のような形式だと剥がれずtorchrunにそのまま渡り、
+    # torchrunがインタプリタ名を実行対象スクリプトと誤認して壊れる。マッチしない
+    # 場合はここで明示的にエラーにする(全ノードへの誤配信を防ぐ)。
+    local payload
+    if [[ "${cmd}" =~ ^python[0-9.]*[[:space:]]+(.*)$ ]]; then
+        payload="${BASH_REMATCH[1]}"
+    else
+        echo "❌ RUN_COMMAND が 'python' から始まっていません(マルチノード起動はpython起動コマンドのみ対応): ${cmd}" >&2
+        echo "1"
+        return
+    fi
 
     if [ ! -f "${PBS_NODEFILE:-}" ]; then
         echo "❌ PBS_NODEFILE が見つかりません（PBS以外のスケジューラでは NNODES>1 は未対応）" >&2
@@ -639,6 +652,11 @@ _run_multi_node() {
 
     mapfile -t NODES < <(sort -u "${PBS_NODEFILE}")
     local n_nodes="${#NODES[@]}"
+    if [ "${n_nodes}" -eq 0 ]; then
+        echo "❌ PBS_NODEFILEにノードが1つもありません" >&2
+        echo "1"
+        return
+    fi
     if [ "${n_nodes}" -ne "${NNODES}" ]; then
         echo "⚠️  PBS_NODEFILEのユニークノード数(${n_nodes})が NNODES(${NNODES})と一致しません。select句とNNODESを合わせること" >&2
     fi
@@ -654,8 +672,16 @@ _run_multi_node() {
     # 無い)ことを2026-08-08、experiments/0020スモークテストの2回目投入
     # (2507294)で実機確認したため。/work配下はNFS共有なので絶対パスで
     # 全ノードから解決できる想定。
+    # `$(...)` 内のコマンド失敗は inherit_errexit 無しでは `set -e` で捕まらない
+    # ため、`|| { ...; return; }` で明示的にチェックする(暗黙のset -eに任せると
+    # apptainer_bin が空文字のまま全ノードのlauncher_scriptに焼き込まれ、
+    # 空コマンド実行という分かりにくい失敗になる)。
     local apptainer_bin
-    apptainer_bin=$(command -v apptainer)
+    if ! apptainer_bin=$(command -v apptainer); then
+        echo "❌ apptainer が見つかりません(PATHを確認してください)" >&2
+        echo "1"
+        return
+    fi
 
     # 入れ子の文字列展開(bash -c "..." の中にさらに bash -c "..." や
     # export FOO="..." のようなダブルクォートを埋め込む方式)は、内側の
@@ -736,13 +762,24 @@ EOF
     # (⚠️ 2026-08-08時点、この経路は2ノードスモークテストでは検証していない
     # ―― スモークテストはUSE_LOCAL_SSD_INPUT=0でデータを一切使わないため。
     # 実際の学習ジョブで初めて確認することになる)。
+    # pbsdshはmother superior(=このメインスクリプト自体を実行しているノード)
+    # にもタスクを配る。USE_LOCAL_SSD_INPUT=1時のデータrsyncは、mother superior
+    # についてはメインスクリプトの「Input」節が既に実行済みなので、
+    # launcher_script側では二重にrsyncしないようホスト名で判定してスキップする。
+    local mother_superior_host
+    mother_superior_host="$(hostname)"
+
     local launcher_script="${JOB_LOG_DIR}/_multinode_launch.sh"
     cat > "${launcher_script}" <<EOF
 #!/bin/bash
 set -euo pipefail
 echo "[multi-node] \$(hostname) launcher starting"
 mkdir -p "${SCRATCH_DIR}"
+if [ "\$(hostname)" = "${mother_superior_host}" ]; then
+    echo "[multi-node] \$(hostname) is mother superior; data already staged by the main script's Input step, skipping re-sync"
+else
 ${data_staging_cmds}
+fi
 "${apptainer_bin}" exec \
     --nv \
     --bind "${SCRATCH_ROOT}/${USER}" \
