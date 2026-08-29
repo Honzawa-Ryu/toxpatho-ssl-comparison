@@ -1,58 +1,67 @@
 #!/bin/bash
 # =====================================================
-# PBS (qsub) 投入用スクリプト — スパコン(Miyabi等のPBS Pro環境)向け。
-# GPU 1台(96GB想定)・DDP無し(単一プロセス python 実行)。
+# PBS (qsub) 投入用スクリプト — Miyabi (Miyabi-G, PBS Pro) 向け。
+# 2ノード(GH200 120GB×2)マルチノードDDP。batch_size 256/GPU × 2 = 実質512
+# (論文 SimSiam, Chen & He 2021 のデフォルトbatch 512と一致)。
 #
-# ⚠️ サイト固有で埋め・確認が必要な項目(このファイルではFIXMEにしてある):
-#   - #PBS -q   : 実際のキュー名
-#   - #PBS -P   : 課金/プロジェクト(グループ)コード
-#   - #PBS -l select=... : Miyabi側のノード/GPU/CPU/メモリ選択構文
-#     (select=1:ncpus=16:ngpus=1:mem=110gb は一般的なPBS Pro記法の一例。
-#      Miyabi独自の書式がある場合は要調整)
-#   - apptainer(SIF)がそのまま使えるか: scripts/slurm_entry.sh は
-#     `apptainer exec --nv ${SIF_PATH} ...` を前提にしている。Miyabiで
-#     apptainer/singularityが無い、module load方式、または別のcontainer
-#     runtimeが必要な場合はscripts/slurm_entry.sh側の対応も要る
-#     (今回は未対応)。env.sif(6.2GB)を転送するか、Miyabi上で
-#     `apptainer build env/env.sif env/env.def` を再ビルドするかも要確認。
-#   - README「セットアップ」節(SIF_PATH/.bashrc/.env)はSlurm前提の記述なので、
-#     Miyabi側でも同様にSIF_PATH等を用意すること。
+# このファイルは元々サイト未確定のFIXMEテンプレート(汎用PBS Pro想定)だった。
+# experiments/0015_20260806_paper_barlowtwins_vitb16/run_slurm.sh でMiyabi実機の
+# qsub投入まで検証済みのサイト固有値(キュー/課金コード/select句/apptainer/
+# SIF_PATH/SCRATCH_ROOT)にここで合わせ、あわせてBSZ/LRも論文値に揃える。
+# マルチノードDDP機構自体は experiments/0017_20260806_paper_dino_vitb16/
+# (4ノード、batch 256/GPU、job 2522081で100 epoch完走)で実機検証済み。
+#
+# 要点(0015/0017と共通、詳細根拠は experiments/0019_20260806_pbs_test/
+# run_slurm.sh 参照):
+#   - キュー名は実行キュー(small-g等)ではなく親のルーティングキュー `regular-g`。
+#   - 課金/グループは `-P` ではなく `-W group_list=gd43`。
+#   - select句は `select=2`(2ノード、各ノードGPU1台・ngpusは無効resource)。
+#   - SCRATCH_ROOT: ノードローカルNVMe SSDの実マウント点は `/local`。
+#   - apptainer: ジョブスクリプトはmodule環境を引き継がないため明示的に
+#     `module load apptainer/1.3.5` が必要。
+#   - SIF_PATH: このリポジトリ専用の env/env.sif は未ビルドのため、暫定で
+#     共有コンテナ pytorch-ngc-26.06.sif を使う。
+#   - walltime上限: `regular-g` は48時間が上限。RUN_COMMAND側に
+#     `--save_interval 5 --resume` があるので、打ち切られても同じ `qsub` で
+#     直近チェックポイントから再開できる想定(実際の再開動作は未検証)。
+#
+# lrについて: base_lr 0.05 はbatch_size=256基準(SimSiam公式のlinear scaling
+# rule: lr = base_lr × batch_size/256)。今回batch_size 256/GPU × 2ノード = 512
+# なので --lr = 0.05 × 512/256 = 0.1 に変更(旧: 単一ノードbatch=256のときは
+# ratio=1で --lr 0.05 のままでよかった)。
 #
 # 投入前提: リポジトリのルートで `mkdir -p logs/0014_20260806_paper_simsiam_vitb16`
-# してから、リポジトリのルートで `qsub experiments/0014_20260806_paper_simsiam_vitb16/run_slurm.sh`
-# を実行する(runx相当の自動化はPBS未対応、README参照)。
+# してから `qsub experiments/0014_20260806_paper_simsiam_vitb16/run_slurm.sh`。
+# 48h経過でジョブが打ち切られたら、同じコマンドで再度 `qsub` して再開する。
 # =====================================================
 #PBS -N 0014_20260806_paper_simsiam_vitb16
-#PBS -q <FIXME: queue name>
-#PBS -P <FIXME: project/account code>
-#PBS -l select=1:ncpus=16:ngpus=1:mem=110gb
-#PBS -l walltime=196:00:00
+#PBS -q regular-g
+#PBS -W group_list=gd43
+#PBS -l select=2
+#PBS -l walltime=48:00:00
 #PBS -j oe
 #PBS -o logs/0014_20260806_paper_simsiam_vitb16/
 #PBS -e logs/0014_20260806_paper_simsiam_vitb16/
 
-# PBS_O_WORKDIR = qsub を実行したディレクトリ。SLURM版のようにmake create_exp時に
-# ホスト固有の絶対パスを埋め込む方式ではなく、投入先(Miyabi)でのリポジトリの
-# 実際の配置パスに追従できるようこちらを使う(リポジトリのルートでqsubする前提)。
+# ジョブスクリプトはmodule環境を引き継がないため明示的にロードする。
+module load apptainer/1.3.5
+
 export PROJECT_ROOT="${PBS_O_WORKDIR:-$(pwd)}"
 export EXP_NAME="0014_20260806_paper_simsiam_vitb16"
 
-# Miyabi側でSIF_PATH/.venvの準備ができていることが前提(README「セットアップ」参照)。
-# 未設定だとscripts/slurm_entry.shが分かりやすいメッセージで落ちる。
-# export SIF_PATH="${PROJECT_ROOT}/env/env.sif"
+# ノードローカルSSDの実際のマウント点(既定の/scratchはMiyabiに存在しない)。
+export SCRATCH_ROOT="/local"
+
+# 共有コンテナを暫定使用(このリポジトリ専用の env/env.sif は未ビルド)。
+export SIF_PATH="/work/share/ContainerImages-G/singularity/pytorch-ngc-26.06.sif"
 
 export WANDB_MODE=offline
 export OMP_NUM_THREADS=1
 export PYTHONPATH="${PROJECT_ROOT}:${PYTHONPATH:-}"
 
 # =====================================================
-# Storage
-# andre01ノードでの実測(EXP13: 0013_20260805_paper_mae_vitb16)で、
-# data/ssl_patches(141GB)をNFS越しにshuffle=Trueでランダム読みすると
-# DataLoaderのプリフェッチが枯渇して1stepが数倍〜十数倍遅くなることを確認済み。
-# ノードローカルSSDへ一度だけrsyncしてから読むようにしておく
-# (Miyabi側のローカルディスクのマウント点が/scratchと異なる場合は
-# SCRATCH_ROOT環境変数で上書きすること)。
+# Storage (理由はEXP14旧版/EXP15冒頭コメント参照。data/ssl_patchesのNFS
+# ランダム読みは遅いため、ノードローカルSSDへ一度rsyncしてから読む)
 # =====================================================
 
 USE_LOCAL_SSD_INPUT=1
@@ -63,32 +72,25 @@ DATA_SUBDIRS=(
 
 # =====================================================
 # python path
-#
-# experiments/${EXP_NAME}/experiment.py ではなく、本番の学習エントリポイント
-# (scripts/train/train_tggate.py、実体は lib/trainer/entry.py)を直接叩く。
 # =====================================================
 
 PYTHON_PATH="${PROJECT_ROOT}/scripts/train/train_tggate.py"
 
 # =====================================================
-# Single run（デフォルト）
+# Multi-node DDP (2 nodes) — batch_size/lrを論文値に揃える
 #
-# wsi-ad experiments/20260714_paper_simsiam_vitb16/run_slurm.sh のpaper-faithfulな
-# CLI引数(SimSiam, Chen & He 2021, ViT-B/16)をそのまま踏襲。GPU 1台なのでDDPは無し
-# (torchrunではなくpython単体で起動)。
-#
-# batch_size 256: wsi-adの単一GPU(A6000 48GB)実績値。今回は96GBなので恐らく
-# もっと大きく出来るが未検証(このプロジェクトのexperiments/0013.../vram_probe.py
-# と同じ手法でMiyabi上で実測してから増やすのが安全)。batch_sizeを変える場合、
-# lrはlinear scaling rule (base_lr 0.05 @ bs256) で再計算すること
-# (例: bs512にするなら --lr 0.1)。
+# wsi-ad experiments/20260714_paper_simsiam_vitb16/run_slurm.sh のpaper-faithful
+# なCLI引数(SimSiam, Chen & He 2021, ViT-B/16)を踏襲しつつ、BSZ/LRは論文の
+# 実値(batch_size=512)にここで揃える。
 # =====================================================
 
+NNODES=2
+NPROC_PER_NODE=1
 RUN_MODE="single"
 RUN_COMMAND="python ${PYTHON_PATH} \
     --note paper_simsiam_vitb16 --project_path ${PROJECT_ROOT} --dir_result ${PROJECT_ROOT}/outputs/${EXP_NAME} \
     --model_name ViTB16 --ssl_name simsiam \
-    --optimizer sgd --lr 0.05 --fix_pred_lr --weight_decay 1e-4 \
+    --optimizer sgd --lr 0.1 --fix_pred_lr --weight_decay 1e-4 \
     --batch_size 256 \
     --num_epoch 100 --warmup_t 10 --lr_min 0.0 \
     --rank_monitor_interval 5 --save_interval 5 --resume"

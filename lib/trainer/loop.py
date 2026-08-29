@@ -103,7 +103,7 @@ def compute_val_loss(ctx: RunContext, model, criterion, loader, max_batches=40):
     return float(np.mean(losses)) if losses else float("nan")
 
 # train
-def train(ctx: RunContext, model, criterion, optimizer, scheduler, early_stopping, num_epoch:int=100, run=None, start_epoch:int=0, train_loss=None):
+def train(ctx: RunContext, model, criterion, optimizer, scheduler, early_stopping, num_epoch:int=100, run=None, start_epoch:int=0, train_loss=None, collapse_monitor=None):
     """ train ssl model """
     args, DEVICE, DIR_NAME, LOGGER = ctx.args, ctx.device, ctx.dir_name, ctx.logger
     start = time.time()
@@ -149,7 +149,12 @@ def train(ctx: RunContext, model, criterion, optimizer, scheduler, early_stoppin
         if distributed.is_main_process() and (
             (epoch + 1) % args.rank_monitor_interval == 0 or (epoch + 1) == num_epoch
         ):
-            ssl_metrics = evaluator.evaluate(model, eval_loader, DEVICE)
+            # DDPラップされたままだと SSLEvaluator._backbone_embed の
+            # hasattr(model, 'backbone') 判定が通らず(DDPは.moduleの属性を
+            # 自動転送しない)、backboneではなく投影後ベクトルで診断指標を
+            # 計算してしまう。unwrap()して生モジュールを渡す(単一プロセス
+            # 実行ではno-op)。
+            ssl_metrics = evaluator.evaluate(distributed.unwrap(model), eval_loader, DEVICE)
             LOGGER.logger.info(
                 f'eff_rank: {ssl_metrics.get("effective_rank", float("nan")):.2f}, '
                 f'feat_std: {ssl_metrics.get("feature_dim_std", float("nan")):.4f}, '
@@ -158,6 +163,8 @@ def train(ctx: RunContext, model, criterion, optimizer, scheduler, early_stoppin
             )
             if run:
                 run.log(ssl_metrics, step=epoch)
+            if collapse_monitor is not None:
+                collapse_monitor.update(ssl_metrics.get("effective_rank"))
         # held-out validation pretext loss on the val fold (overfitting monitor)
         val_epoch_loss = compute_val_loss(ctx, model, criterion, eval_loader, max_batches=args.val_max_batches)
         LOGGER.logger.info(
@@ -200,4 +207,20 @@ def train(ctx: RunContext, model, criterion, optimizer, scheduler, early_stoppin
             LOGGER.logger.info(f'Early Stopping (val_loss) at Epoch: {epoch}')
             distributed.unwrap(model).load_state_dict(torch.load(early_stopping.path))
             return model, train_loss, True
+        if collapse_monitor is not None and (
+            (epoch + 1) % args.rank_monitor_interval == 0 or (epoch + 1) == num_epoch
+        ):
+            # effective_rankはrank0だけが計算している(上のrank_monitorブロック)ため、
+            # collapse判定をall_reduceで全rankへ揃えてから抜ける。揃えずにrank0だけ
+            # breakすると、他rankが次epochのDDP集合通信(backward等)を待ち続けてhangする。
+            collapse_flag = torch.zeros(1, device=DEVICE)
+            if distributed.is_main_process() and collapse_monitor.collapsed:
+                collapse_flag[0] = 1.0
+            collapse_flag = distributed.all_reduce_mean(collapse_flag)
+            if collapse_flag.item() > 0:
+                LOGGER.logger.info(
+                    f'Collapse detected (effective_rank < {args.collapse_rank_threshold} for '
+                    f'{args.collapse_patience} consecutive checks) at Epoch: {epoch} — aborting to save compute'
+                )
+                return model, train_loss, True
     return model, train_loss, True

@@ -7,6 +7,7 @@ DDP ラップ自体は lib/trainer/entry.py の `distributed.wrap(model)` で行
 分散実行時にもモデル構築ロジック自体は単一プロセス実行と同じにする。
 
 """
+import torch
 import torch.nn as nn
 from timm.scheduler import CosineLRScheduler
 
@@ -42,12 +43,15 @@ def prepare_model(
     """
     args, ssl_class = ctx.args, ctx.ssl_class
     # model building with indicated name
-    # mae/dino build their own timm ViT internally and ignore this backbone,
-    # so avoid an (offline-unsafe) ImageNet weight download for them.
-    _self_backbone = args.ssl_name in ("mae", "dino")
-    _weights = None if (_self_backbone or model_name == "DenseNet121") else "DEFAULT"
+    # SSL手法比較の前提は「各手法を同一条件(=同じランダム初期化)で事前学習する」こと
+    # (Goal.yaml: 「各手法を同一条件で事前学習し...」)。ImageNet事前学習済み重みを
+    # 一部の手法・backboneにだけ読み込むと、その手法だけ有利なwarm startになり
+    # 比較が成立しない。mae/dinoは元々スクラッチだったが、byol/simclr/wsl や
+    # barlowtwins/simsiam/swavを非ViT backboneで使うと weights="DEFAULT" 経由で
+    # 事前学習済み重みが混入していたため、常にスクラッチに統一する
+    # (2026-08-11実機確認)。
     try:
-        encoder = zoo.DICT_MODEL[model_name][0](weights=_weights)
+        encoder = zoo.DICT_MODEL[model_name][0](weights=None)
         size=zoo.DICT_MODEL[model_name][1]
     except:
         print("indicated model name is not implemented")
@@ -86,7 +90,13 @@ def prepare_model(
         model_kwargs["projection_dim"] = args.proj_dim
         model_kwargs["pred_dim"] = args.proj_dim
     model, criterion = ssl_class.prepare_model(backbone, head_size=size, **model_kwargs)
-    # model.load_state_dict(torch.load(args.model_path))
+    if args.model_path:
+        # warm start: load weights only (student+teacher, via model.state_dict()) from a
+        # finished run's model_ssl.pt. Unlike --resume, optimizer/scheduler/epoch counter
+        # are NOT restored, so this run gets a fresh schedule (e.g. continuing 0017 past
+        # its original epoch budget with a new cosine cycle instead of a flat lr_min tail).
+        model.load_state_dict(torch.load(args.model_path, map_location=ctx.device))
+        print(f"warm-started model weights from {args.model_path}")
     if args.optimizer == "lars" and args.lars_exclude_bias_bn:
         # Barlow Twins / SwAV: weights (LARS-adapted, weight-decayed) vs bias & BN
         # (ndim<=1: excluded from LARS adaptation and weight decay, own LR).
@@ -140,4 +150,9 @@ def prepare_model(
         patience=patience, delta=delta, path=f'{ctx.dir_name}/checkpoint.pt',
         save_enabled=distributed.is_main_process(),
     )
-    return model, criterion, optimizer, scheduler, early_stopping
+    collapse_monitor = None
+    if args.collapse_early_stop:
+        collapse_monitor = sslmodel.utils.CollapseMonitor(
+            rank_threshold=args.collapse_rank_threshold, patience=args.collapse_patience,
+        )
+    return model, criterion, optimizer, scheduler, early_stopping, collapse_monitor

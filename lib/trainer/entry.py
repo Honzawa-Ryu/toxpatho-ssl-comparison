@@ -61,6 +61,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument('--val_max_batches', type=int, default=40) # held-out val fold batches for the pretext val loss
     parser.add_argument('--patience', type=int, default=7) # early stopping
     parser.add_argument('--delta', type=float, default=0) # early stopping
+    # collapse-triggered abort: opt-in, for diagnostic/isolation runs only (Goal.yaml treats
+    # collapse monitoring as a health check, not a stop criterion, for the main paper_* comparisons)
+    parser.add_argument('--collapse_early_stop', action='store_true') # if set, abort when effective_rank stays collapsed
+    parser.add_argument('--collapse_rank_threshold', type=float, default=5.0) # effective_rank below this counts as collapsed
+    parser.add_argument('--collapse_patience', type=int, default=2) # consecutive rank_monitor_interval checks below threshold before aborting
     parser.add_argument('--freeze_backbone', action='store_true') # whether to freeze backbone during training
     # Transform (augmentation) settings
     parser.add_argument('--color_plob', type=float, default=0.8)
@@ -131,7 +136,7 @@ def _run(ctx: RunContext):
                          name=f"{args.note}_{args.ssl_name}_{args.model_name}_lr{args.lr}_epoch{args.num_epoch}_patience{args.patience}_delta{args.delta}_freeze{args.freeze_backbone}",
                          config=args.__dict__)
     # 1. Self-Supervised Learning
-    model, criterion, optimizer, scheduler, early_stopping = prepare_model(
+    model, criterion, optimizer, scheduler, early_stopping, collapse_monitor = prepare_model(
         ctx,
         model_name=args.model_name, patience=args.patience, delta=args.delta, lr=args.lr, weight_decay=args.weight_decay, num_epoch=args.num_epoch, freeze_backbone=args.freeze_backbone,
         layer_wise_lr=args.layer_wise_lr, backbone_lr_ratio=args.backbone_lr_ratio
@@ -171,7 +176,7 @@ def _run(ctx: RunContext):
         LOGGER.logger.info('--resume set but no state.pt found; starting fresh')
     model, train_loss, flag_finish = train(
         ctx, model, criterion, optimizer, scheduler, early_stopping, num_epoch=args.num_epoch, run=run,
-        start_epoch=start_epoch, train_loss=train_loss_init
+        start_epoch=start_epoch, train_loss=train_loss_init, collapse_monitor=collapse_monitor
     )
     distributed.barrier()  # 全rankが学習ループを終えてから rank0 の書き出しへ進む
     if flag_finish:

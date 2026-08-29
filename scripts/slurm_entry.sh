@@ -608,6 +608,183 @@ _run_single() {
 }
 
 # =====================================================
+# Multi-node DDP (PBS)
+#
+# opt-in: run_slurm.sh 側で `NNODES`(2以上の整数)を設定した場合のみ使う。
+# Miyabi-Gは1ノード=GPU1台(GH200)なので、単一ノード内マルチGPU
+# (torchrun --standalone)は使えず、複数ノードにまたがるDDPが必須になる
+# (詳細根拠は experiments/0020_.../run_slurm.sh 冒頭コメント参照)。
+#
+# ⚠️ 実機未検証(2026-08-08時点)。pbsdshの正確な引数・NCCL/InfiniBand周りの
+# 追加環境変数の要否・PBS_NODEFILEのフォーマットは、このサイトで一度も
+# 実行確認していない。experiments/0020_.../ の2ノードスモークテストで
+# 先に疎通確認してから本番実験に使うこと。
+#
+# 方式: cmd（"python foo.py --args" 形式のRUN_COMMAND）から先頭の "python "
+# を剥がし、torchrunのrendezvous引数を前置したうえで、pbsdshで全ノードに
+# 同一コマンドを配る（c10d rendezvousはjoin順でrank自動割当されるため、
+# 全ノードに同一コマンドを配るだけでよく、ノードごとに --node-rank を
+# 出し分ける必要はない）。
+# =====================================================
+
+_run_multi_node() {
+    local cmd="$1"
+    local payload="${cmd#python }"
+
+    if [ ! -f "${PBS_NODEFILE:-}" ]; then
+        echo "❌ PBS_NODEFILE が見つかりません（PBS以外のスケジューラでは NNODES>1 は未対応）" >&2
+        echo "1"
+        return
+    fi
+
+    mapfile -t NODES < <(sort -u "${PBS_NODEFILE}")
+    local n_nodes="${#NODES[@]}"
+    if [ "${n_nodes}" -ne "${NNODES}" ]; then
+        echo "⚠️  PBS_NODEFILEのユニークノード数(${n_nodes})が NNODES(${NNODES})と一致しません。select句とNNODESを合わせること" >&2
+    fi
+
+    local master_addr="${NODES[0]}"
+    local master_port="${MASTER_PORT:-29500}"
+
+    echo "=== multi-node DDP: ${n_nodes} nodes, master=${master_addr}:${master_port} ===" >&2
+    printf '  node: %s\n' "${NODES[@]}" >&2
+
+    # `apptainer` はPATH解決ではなく絶対パスで渡す。pbsdshで起動される
+    # リモートタスクのシェルは `module load` を引き継がない(=PATHにapptainerが
+    # 無い)ことを2026-08-08、experiments/0020スモークテストの2回目投入
+    # (2507294)で実機確認したため。/work配下はNFS共有なので絶対パスで
+    # 全ノードから解決できる想定。
+    local apptainer_bin
+    apptainer_bin=$(command -v apptainer)
+
+    # 入れ子の文字列展開(bash -c "..." の中にさらに bash -c "..." や
+    # export FOO="..." のようなダブルクォートを埋め込む方式)は、内側の
+    # クォートが外側のクォートと衝突してコマンドが途中で切れる
+    # (2026-08-08、experiments/0020スモークテストの3回目投入(2507323)で
+    # 実機確認: `export JOB_LOG_DIR="${JOB_LOG_DIR}"` の埋め込みダブル
+    # クォートが外側の `bash -c "${node_cmd}"` を早期に閉じてしまい、
+    # torchrunが一度も呼ばれないまま空のexportだけで exit 0 していた)。
+    # そのため、各階層は「文字列を直接埋め込む」のではなく「共有NFS
+    # (/work配下、全ノードから見える)上のスクリプトファイルをパスで渡す」
+    # 方式に統一し、ネストした引用符そのものを発生させない。
+    # USE_LOCAL_SSD_INPUT=1の場合、メインスクリプトの「Input」節(冒頭付近)は
+    # 実行ノード(mother superior)のローカルSSDにしかrsyncしないため、残りの
+    # ノードにはデータが存在しない。ここで同じロジックをノードごとに
+    # 再実行できるようlauncher_script側に埋め込む。
+    local dataset_dir_value="${PROJECT_ROOT}/data"
+    local data_staging_cmds="true"
+    if [ "${USE_LOCAL_SSD_INPUT:-0}" -eq 1 ]; then
+        dataset_dir_value="${SCRATCH_DIR}/data"
+        data_staging_cmds="mkdir -p \"${SCRATCH_DIR}/data\""
+        if [[ -v DATA_SUBDIRS && "${#DATA_SUBDIRS[@]}" -gt 0 ]]; then
+            for sub in "${DATA_SUBDIRS[@]}"; do
+                data_staging_cmds="${data_staging_cmds}
+mkdir -p \"${SCRATCH_DIR}/data/$(dirname "${sub}")\"
+rsync -a \"${PROJECT_ROOT}/data/${sub}\" \"${SCRATCH_DIR}/data/$(dirname "${sub}")/\""
+            done
+        else
+            data_staging_cmds="${data_staging_cmds}
+rsync -a \"${PROJECT_ROOT}/data/\" \"${SCRATCH_DIR}/data/\""
+        fi
+    fi
+
+    local incontainer_script="${JOB_LOG_DIR}/_multinode_incontainer.sh"
+    cat > "${incontainer_script}" <<EOF
+#!/bin/bash
+set -euo pipefail
+source ${PROJECT_ROOT}/.venv/bin/activate
+export CUDA_HOME=/usr/local/cuda
+export JOB_LOG_DIR=${JOB_LOG_DIR}
+export DATASET_DIR=${dataset_dir_value}
+# 以下の環境変数はメインスクリプト(run_slurm.sh)がexportしていても、pbsdshの
+# リモートタスクへ継承される保証がない(apptainer絶対パス化と同じ理由)。
+# PYTHONPATH未継承ではlib以下のimportがModuleNotFoundErrorで落ち、
+# WANDB_MODE未継承ではwandb.init()がオフライン扱いにならずAPIキー無しで
+# UsageErrorになり rank0 がクラッシュ、それにより他rankもTCPStore接続断で
+# 巻き添えクラッシュすることを2026-08-09/10、DINO 4ノードジョブ(2508476,
+# 2513143)で実機確認した(この行のコメントにバッククォートを使ったところ、
+# 非quotedヒアドキュメント内でコマンド置換として実行されてしまいノイズに
+# なったため、この注意書き自体もバッククォート無しにしてある)。
+export PYTHONPATH=${PROJECT_ROOT}:${PYTHONPATH:-}
+export WANDB_MODE=${WANDB_MODE:-offline}
+export OMP_NUM_THREADS=${OMP_NUM_THREADS:-1}
+cd ${PROJECT_ROOT}
+# 素の torchrun コマンドは /usr/local/bin/torchrun (shebang: /usr/bin/python3、
+# コンテナのシステムpython) を指しており、.venv/bin/torchrun は存在しない。
+# そのままだとワーカーがシステムpythonで起動し、.venvにだけpip installした
+# パッケージ(scikit-learn等)がModuleNotFoundErrorになることを2026-08-09、
+# DINO 4ノードジョブ(2509305)で実機確認した。python -m torch.distributed.run
+# で起動すればsys.executable経由で.venv/bin/pythonが使われる。
+# c10d rendezvousのTCPStore read_timeoutはデフォルト60秒(torch.distributed.
+# elastic.rendezvous.c10d_rendezvous_backend.create_backendのdocstringで確認)。
+# ノードごとにUSE_LOCAL_SSD_INPUT=1の141GB rsync + apptainerのSIFサンドボックス
+# 展開 + 重いimportの所要時間がばらつき、60秒枠を超えて
+# RendezvousConnectionError(timed out after 60000ms)になることを2026-08-09、
+# DINO 4ノードジョブ(2509371)で実機確認したため、大きめに延長しておく。
+python -m torch.distributed.run --nnodes=${n_nodes} --nproc_per_node=${NPROC_PER_NODE:-1} \
+    --rdzv_backend=c10d --rdzv_id=${JOB_ID} \
+    --rdzv_endpoint=${master_addr}:${master_port} \
+    --rdzv_conf=read_timeout=600 \
+    ${payload}
+EOF
+    chmod +x "${incontainer_script}"
+
+    # SCRATCH_DIR(ノードローカルNVMe SSD配下)はメインスクリプトの
+    # mkdir -p では実行ノード(mother superior)にしか作られないため、
+    # pbsdshで各ノードに配るこの外側スクリプトでノードごとに作り直す。
+    # データのrsync(USE_LOCAL_SSD_INPUT=1時)も同様に全ノードで個別に必要
+    # (⚠️ 2026-08-08時点、この経路は2ノードスモークテストでは検証していない
+    # ―― スモークテストはUSE_LOCAL_SSD_INPUT=0でデータを一切使わないため。
+    # 実際の学習ジョブで初めて確認することになる)。
+    local launcher_script="${JOB_LOG_DIR}/_multinode_launch.sh"
+    cat > "${launcher_script}" <<EOF
+#!/bin/bash
+set -euo pipefail
+echo "[multi-node] \$(hostname) launcher starting"
+mkdir -p "${SCRATCH_DIR}"
+${data_staging_cmds}
+"${apptainer_bin}" exec \
+    --nv \
+    --bind "${SCRATCH_ROOT}/${USER}" \
+    --bind "${SCRATCH_DIR}" \
+    --env UV_CACHE_DIR="${SCRATCH_DIR}/.uv_cache" \
+    "${SIF_PATH}" \
+    bash "${incontainer_script}"
+echo "[multi-node] \$(hostname) launcher finished"
+EOF
+    chmod +x "${launcher_script}"
+
+    set +e
+
+    # pbsdshは `--` 区切りが必須(無いと後続の引数をpbsdsh自身のオプションと
+    # して誤パースする。2026-08-08、experiments/0020スモークテストの1回目
+    # 投入(2507246)で実機確認)。
+    #
+    # ⚠️ pbsdsh自体の終了コードは、spawnした子タスクが失敗しても0のままに
+    # なる(2026-08-09、DINO 4ノードジョブ(2508476)で実機確認: 4タスク全部が
+    # `exit status 1` でも pbsdsh 自体は正常終了し、run_metadata.yamlの
+    # statusが実際は失敗しているのに COMPLETED と誤記録された)。そのため
+    # `wait`の終了コードを鵜呑みにせず、出力中の `exit status <非ゼロ>` を
+    # 自前で検出してcodeへ反映する。
+    local pbsdsh_log="${JOB_LOG_DIR}/_pbsdsh_output.log"
+    pbsdsh -v -- bash "${launcher_script}" 2>&1 | tee "${pbsdsh_log}" 1>&2 &
+
+    local pid=$!
+    local code=0
+
+    wait ${pid} || code=$?
+
+    if grep -qE "exit status [1-9]" "${pbsdsh_log}"; then
+        echo "❌ multi-node: 1つ以上のノードでタスクが失敗しました(pbsdshのexit statusを検出)" >&2
+        code=1
+    fi
+
+    set -e
+
+    echo "${code}"
+}
+
+# =====================================================
 # Pre-native command (apptainer外で実行したい処理)
 # ES 起動など、ネイティブ bash レイヤーで動かすコマンドを
 # run_slurm.sh で PRE_NATIVE_COMMAND に設定する
@@ -639,6 +816,10 @@ if [ "${RUN_MODE}" = "seq" ]; then
             break
         fi
     done
+
+elif [ "${NNODES:-1}" -gt 1 ]; then
+
+    EXIT_CODE=$(_run_multi_node "${RESOLVED_COMMAND}")
 
 else
 

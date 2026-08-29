@@ -447,6 +447,35 @@ class EarlyStopping:
     def delete_checkpoint(self):
         os.remove(self.path)
 
+
+class CollapseMonitor:
+    """
+    Aborts training if effective_rank stays collapsed for consecutive checks.
+
+    Unlike EarlyStopping (which reacts to val_loss plateauing), this reacts to
+    representation collapse (effective_rank falling near 1, i.e. the output has
+    collapsed onto ~a single point) so a diagnostic/isolation run doesn't burn
+    GPU-hours on an already-dead model. Goal.yaml treats collapse monitoring as
+    a health check, not a stop criterion, for the main `paper_*` comparison runs;
+    this class is opt-in (see `--collapse_early_stop`) and left unused there.
+    """
+    def __init__(self, rank_threshold: float = 5.0, patience: int = 2):
+        self.rank_threshold = rank_threshold
+        self.patience = patience
+        self.counter = 0
+        self.collapsed = False
+
+    def update(self, effective_rank):
+        if effective_rank is None:
+            return
+        if effective_rank < self.rank_threshold:
+            self.counter += 1
+            if self.counter >= self.patience:
+                self.collapsed = True
+        else:
+            self.counter = 0
+
+
 def set_criterion(criterion_name="BCE"):
     if criterion_name == "BCE":
         criterion = nn.BCEWithLogitsLoss()
