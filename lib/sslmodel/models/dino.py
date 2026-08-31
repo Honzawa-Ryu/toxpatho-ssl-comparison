@@ -116,18 +116,24 @@ class DINOLoss(nn.Module):
 
     def forward(self, student_outputs, teacher_outputs):
         """student_outputs / teacher_outputs: list of tensors (one per view)."""
-        student = [s / self.student_temp for s in student_outputs]
+        # log_softmax は student ビューごとに1回だけ計算して使い回す。
+        # 以前は teacher ビューごとにループ内で計算し直しており、同じテンソルを
+        # 2回(= n_global_crops 回)作っていた。log_softmax は autocast下でも fp32 で
+        # 保持され backward 用に保存されるため、out_dim=65536 では
+        # 10ビュー x batch x 65536 x 4B = 約0.7GB/回 とメモリを直撃する。
+        student_logsm = [F.log_softmax(s / self.student_temp, dim=-1)
+                         for s in student_outputs]
         teacher = [F.softmax((t - self.center) / self.teacher_temp, dim=-1).detach()
                    for t in teacher_outputs]
 
         total_loss = 0.0
         n_terms = 0
         for iq, tq in enumerate(teacher):
-            for iv, sv in enumerate(student):
+            for iv, sv in enumerate(student_logsm):
                 if iv == iq:
                     # skip same view (teacher & student on identical crop)
                     continue
-                loss = torch.sum(-tq * F.log_softmax(sv, dim=-1), dim=-1)
+                loss = torch.sum(-tq * sv, dim=-1)
                 total_loss += loss.mean()
                 n_terms += 1
         total_loss /= max(n_terms, 1)
@@ -162,7 +168,8 @@ class DINO(nn.Module):
 
     def __init__(self, backbone_name="vit_base_patch16_224", out_dim=8192,
                  momentum=0.9995, norm_last_layer=True, n_global_crops=2,
-                 n_local_crops=0, freeze_last_layer_epochs=1, momentum_end=None):
+                 n_local_crops=0, freeze_last_layer_epochs=1, momentum_end=None,
+                 drop_path_rate=0.0):
         """momentum_end=None なら momentum 固定(0017の運用、既定)。
 
         momentum_end を指定すると論文のcosineスケジュール
@@ -179,8 +186,13 @@ class DINO(nn.Module):
         self.n_local_crops = n_local_crops
         self.freeze_last_layer_epochs = freeze_last_layer_epochs
 
+        # stochastic depth は student だけに掛ける(公式 main_dino.py と同じ:
+        # student は drop_path_rate=args.drop_path_rate、teacher は既定の0で構築する)。
+        # teacherは勾配を持たずEMAで更新されるだけなので、確率的にブロックを落とす
+        # 意味がない。drop_pathはパラメータを持たないため state_dict は一致する。
         student_backbone = timm.create_model(
-            backbone_name, num_classes=0, dynamic_img_size=True)
+            backbone_name, num_classes=0, dynamic_img_size=True,
+            drop_path_rate=drop_path_rate)
         embed_dim = student_backbone.num_features
 
         self.student_backbone = student_backbone

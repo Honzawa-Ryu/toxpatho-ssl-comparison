@@ -450,33 +450,71 @@ class EarlyStopping:
 
 class CollapseMonitor:
     """
-    Aborts training if effective_rank stays collapsed for consecutive checks.
+    Aborts training if the representation stays collapsed for consecutive checks.
 
     Unlike EarlyStopping (which reacts to val_loss plateauing), this reacts to
-    representation collapse (effective_rank falling near 1, i.e. the output has
-    collapsed onto ~a single point) so a diagnostic/isolation run doesn't burn
-    GPU-hours on an already-dead model. Goal.yaml treats collapse monitoring as
-    a health check, not a stop criterion, for the main `paper_*` comparison runs;
-    this class is opt-in (see `--collapse_early_stop`) and left unused there.
+    representation collapse so a diagnostic/isolation run doesn't burn GPU-hours
+    on an already-dead model. Goal.yaml treats collapse monitoring as a health
+    check, not a stop criterion, for the main `paper_*` comparison runs; this
+    class is opt-in (see `--collapse_early_stop`) and left unused there.
+
+    判定は3指標のOR（どれか1つでも patience 回連続で該当したら崩壊とみなす）:
+
+    1. `train_loss >= ln(out_dim) * loss_ratio`
+       DINOの一様崩壊。student/teacherがともに一様分布になると損失は厳密に
+       ln(out_dim)(out_dim=8192 なら 9.0109)で固定され、勾配が厳密に0になる
+       吸収状態に入る。**最も鋭敏で誤検知が少ない**ため第一指標。
+    2. `uniformity > uniformity_threshold`
+       Wang & Isola の uniformity は「全サンプルが1点に潰れると0に漸近」する。
+       DINO以外(out_dimを持たない手法)でも効く汎用指標。
+    3. `effective_rank < rank_threshold`
+       従来の指標。**鈍すぎるので単独では使い物にならない**: 0023 ep5 は
+       loss=ln(8192)ちょうど・feat_std 0.055 と壊滅状態なのに eff_rank は 31.99
+       あり、閾値5.0では発火しなかった。0024 は36 epoch崩壊し続けたが最後まで
+       発火しなかった。後方互換のため残してあるだけ。
+
+    注意: `alignment` は Wang & Isola の alignment **loss**(正例ペア間の正規化後
+    2乗距離)であり **小さいほど良い**。崩壊時も0に近づくため単独では判定に使えない
+    (2026-08-29のログで「alignment 0.0032は壊滅」と誤読した経緯がある)。
     """
-    def __init__(self, rank_threshold: float = 5.0, patience: int = 2):
+    def __init__(self, rank_threshold: float = 5.0, patience: int = 2,
+                 out_dim: int = 0, loss_ratio: float = 0.999,
+                 uniformity_threshold: float = -0.05):
         self.rank_threshold = rank_threshold
         self.patience = patience
+        self.loss_ceiling = float(np.log(out_dim)) if out_dim and out_dim > 1 else None
+        self.loss_ratio = loss_ratio
+        self.uniformity_threshold = uniformity_threshold
         self.counter = 0
         self.collapsed = False
+        self.reason = ''
 
-    def update(self, effective_rank):
+    def update(self, effective_rank, uniformity=None, train_loss=None):
         # NaN (e.g. from a diverged/collapsed run whose SVD blows up) must be treated
         # like None here: `NaN < threshold` is always False in Python, so without this
         # check a NaN reading would silently reset the counter instead of being ignored.
-        if effective_rank is None or np.isnan(effective_rank):
-            return
-        if effective_rank < self.rank_threshold:
+        def _valid(x):
+            return x is not None and not np.isnan(x)
+
+        reasons = []
+        if self.loss_ceiling is not None and _valid(train_loss) \
+                and train_loss >= self.loss_ceiling * self.loss_ratio:
+            reasons.append(f'train_loss {train_loss:.4f} >= ln(out_dim) x {self.loss_ratio} '
+                           f'(= {self.loss_ceiling * self.loss_ratio:.4f}) — uniform collapse')
+        if _valid(uniformity) and uniformity > self.uniformity_threshold:
+            reasons.append(f'uniformity {uniformity:.4f} > {self.uniformity_threshold} '
+                           f'— all samples collapsed onto one point')
+        if _valid(effective_rank) and effective_rank < self.rank_threshold:
+            reasons.append(f'effective_rank {effective_rank:.2f} < {self.rank_threshold}')
+
+        if reasons:
             self.counter += 1
+            self.reason = '; '.join(reasons)
             if self.counter >= self.patience:
                 self.collapsed = True
         else:
             self.counter = 0
+            self.reason = ''
 
 
 def set_criterion(criterion_name="BCE"):

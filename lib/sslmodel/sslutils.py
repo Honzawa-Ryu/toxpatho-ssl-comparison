@@ -375,9 +375,16 @@ class DINO:
                       teacher_temp: float = 0.04, student_temp: float = 0.1,
                       freeze_last_layer_epochs: int = 1,
                       momentum_end=None, teacher_temp_end=None,
-                      teacher_temp_warmup_epochs: int = 30):
-        # anti-collapse defaults: smaller head (8192), slower EMA teacher (0.9995),
-        # and last-layer freezing for the first epoch (see DINO.cancel_last_layer_gradients).
+                      teacher_temp_warmup_epochs: int = 30,
+                      drop_path_rate: float = 0.0):
+        # 既定値は0017と同じ「据え置き運用」で、公式(main_dino.py の vit_base 既定)とは
+        # out_dim(公式65536) と momentum(公式0.996 cosine->1.0) が異なる。
+        # 論文準拠で走らせる場合は --dino_out_dim 65536 / --dino_momentum_start 0.996
+        # --dino_momentum_end 1.0 を明示すること(0025以降はそうしている)。
+        # 注: 「out_dim が小さい方が崩壊しにくい」は誤りで、公式は逆に大きい値を使う
+        # (プロトタイプ数が多いほどサンプルを散らせるので一様解に落ちにくい)。
+        # momentum 0.9995 も公式ヘルプでは batch 256 向けの推奨値であり、
+        # global batch 1024 の本プロジェクトでは 0.996 が論文設定にあたる。
         # momentum_end / teacher_temp_end は既定 None = 固定運用(0017と同一)。
         # 指定すると論文(Caron et al. 2021)のcosine/linearスケジュールが有効になる
         # (どちらか片方だけ有効にできるので、崩壊要因の切り分けに使える)。
@@ -387,7 +394,7 @@ class DINO:
             momentum=momentum, n_global_crops=self.n_global_crops,
             n_local_crops=self.n_local_crops,
             freeze_last_layer_epochs=freeze_last_layer_epochs,
-            momentum_end=momentum_end)
+            momentum_end=momentum_end, drop_path_rate=drop_path_rate)
         criterion = dino.DINOLoss(
             out_dim=out_dim, teacher_temp=teacher_temp, student_temp=student_temp,
             teacher_temp_end=teacher_temp_end,
@@ -412,11 +419,20 @@ class DINO:
 
     def prepare_featurize_model(self, backbone=None, model_path: str = "",
                                 head_size: int = 768, out_dim: int = 8192):
+        state = None
+        if model_path:
+            state = torch.load(model_path, map_location=self.DEVICE)
+            # out_dim はランごとに異なりうる(0024以前は8192、0025以降は公式の65536)。
+            # 呼び出し側(lib/model/zoo.py)は out_dim を渡さないので、チェックポイントの
+            # 形状から復元する。ここを固定値にすると 65536 のランを読めない。
+            key = 'student_head.last_layer.weight_v'
+            if key in state:
+                out_dim = state[key].shape[0]
         model = dino.DINO(
             backbone_name="vit_base_patch16_224", out_dim=out_dim,
             n_global_crops=self.n_global_crops, n_local_crops=self.n_local_crops)
-        if model_path:
-            model.load_state_dict(torch.load(model_path, map_location=self.DEVICE))
+        if state is not None:
+            model.load_state_dict(state)
         featurizer = model.student_backbone  # timm ViT, num_classes=0 -> pooled features
         featurizer.to(self.DEVICE)
         return featurizer

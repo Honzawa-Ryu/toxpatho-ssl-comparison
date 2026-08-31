@@ -200,6 +200,12 @@ test:
 		bash "$$t" || exit 1; \
 	done
 	@echo ""
+	@echo "🧪 Python unit tests (torch不要・コンテナ外でも走る)"
+	@for t in tests/test_*.py; do \
+		echo "--- $$t ---"; \
+		python3 "$$t" || exit 1; \
+	done
+	@echo ""
 	@echo "🧪 pytest (lib/)"
 	@pytest lib/ -v
 

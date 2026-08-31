@@ -84,7 +84,13 @@ def build_parser() -> argparse.ArgumentParser:
     # --- paper-faithful knobs (per-method) ---
     parser.add_argument('--lr_bias', type=float, default=0.0)          # Barlow Twins: separate LR for biases/BN params (0 = same as --lr)
     parser.add_argument('--lars_exclude_bias_bn', action='store_true') # LARS: exclude bias/BN (ndim<=1) from adaptation + weight decay
+    # 既定では bias / LayerNorm・BNのゲイン(ndim<=1) を weight decay から除外する
+    # (DINO/MAE/BT/SwAV いずれの公式実装もそうしている)。このフラグを付けると
+    # 全パラメータへwdを掛ける従来挙動に戻る (SimSiam原論文のResNetレシピ再現用)。
+    # 除外しないとLayerNormゲインが指数的に0へ削られ恒久崩壊する (lib/trainer/model.py:_wd_groups)。
+    parser.add_argument('--wd_apply_to_bias_norm', action='store_true')
     parser.add_argument('--weight_decay_end', type=float, default=0.0) # DINO: cosine wd schedule end (0 = fixed weight_decay)
+    parser.add_argument('--clip_grad', type=float, default=0.0)        # DINO公式: 3.0 (パラメータ毎のL2ノルムでクリップ)。0 = 無効
     # DINO teacher schedules. 既定(None)は 0017 と同じ固定値運用
     # (momentum 0.9995 / teacher_temp 0.04、意図的なanti-collapse設定)。
     # 指定すると論文(Caron et al. 2021)のスケジュールが有効になる。
@@ -93,6 +99,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument('--dino_momentum_end', type=float, default=None)          # 論文: 1.0 (cosine start->1.0)。未指定なら momentum 固定
     parser.add_argument('--dino_teacher_temp_end', type=float, default=None)      # 論文: 0.07 (linear warmup 0.04->0.07)。未指定なら teacher_temp 固定
     parser.add_argument('--dino_teacher_temp_warmup_epochs', type=int, default=30) # 論文: 30 epoch
+    # 公式(main_dino.py, --arch vit_base)の既定は out_dim 65536 / drop_path_rate 0.1。
+    # 0024以前は 8192 / 0.0 で走っていたため、既定は据え置きにして明示指定で論文値にする。
+    parser.add_argument('--dino_out_dim', type=int, default=8192)      # 公式: 65536 (プロトタイプ数。崩壊時の loss = ln(out_dim))
+    parser.add_argument('--dino_drop_path', type=float, default=0.0)   # 公式: 0.1 (stochastic depth。studentのみに適用)
     parser.add_argument('--n_prototypes', type=int, default=512)       # SwAV: number of prototypes (paper: 3000)
     parser.add_argument('--n_global_crops', type=int, default=2)       # multicrop global views
     parser.add_argument('--n_local_crops', type=int, default=0)        # multicrop local views (SwAV 6 / DINO 8); 0 = disabled
@@ -166,7 +176,20 @@ def _run(ctx: RunContext):
         # state.pt は常に unwrap 済み(非DDP)のstate_dictで保存される(loop.py)ため、
         # DDPラップ後のmodelへ読む場合も .module 側にロードする必要がある。
         distributed.unwrap(model).load_state_dict(state['model_state_dict'])
-        optimizer.load_state_dict(state['optimizer_state_dict'])
+        try:
+            optimizer.load_state_dict(state['optimizer_state_dict'])
+        except ValueError as e:
+            # 2026-08-31に weight decay の param group を分割した(bias/ndim<=1 を wd=0 の
+            # 別グループへ。lib/trainer/model.py:_wd_groups)。それ以前の state.pt は
+            # グループ数が違うため復元できない。黙って続けると optimizer 状態が
+            # 失われたまま学習が進むので、原因を明示して止める。
+            raise RuntimeError(
+                f'{state_path} は weight-decay param group 分割より前に保存されたもので、'
+                f'現在のoptimizerと構成が一致しないため復元できません ({e})。'
+                f'旧ランの続きは不可です。--resume を外して学習し直してください'
+                f'（旧設定のまま続けたい場合のみ --wd_apply_to_bias_norm を付けると'
+                f'グループ構成が一致しますが、崩壊の原因を残したまま走ることになります）。'
+            ) from e
         try:
             scheduler.load_state_dict(state['scheduler_state_dict'])
         except Exception as e:

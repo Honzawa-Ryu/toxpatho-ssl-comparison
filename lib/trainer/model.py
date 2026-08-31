@@ -18,6 +18,45 @@ from lib.trainer.context import RunContext
 from lib.trainer.optim import build_optimizer
 
 
+def _wd_groups(args, groups):
+    """各param groupを「weight decayを掛ける側」と「掛けない側(bias・ndim<=1)」に割る。
+
+    bias / LayerNorm・BatchNormのゲインに weight decay を掛けてはいけない
+    （DINO `utils.get_params_groups()`, MAE `param_groups_lrd()`, Barlow Twins/SwAV
+    のLARS除外フラグ、いずれの公式実装も 1次元パラメータと bias を wd=0 の別グループ
+    にしている）。これらのパラメータは wd に対抗する勾配をほとんど持たないため、
+    掛けると毎step `γ <- γ(1 - lr*wd)` で単調に削られ、backboneのLayerNormゲインが
+    指数的にゼロへ向かう。
+
+    2026-08-31の解析: この実装漏れがDINOの恒久崩壊(loss = ln(8192) = 9.0109 固定)の
+    主因だった。0017(num_epoch=100, wd 0.04->0.4)では ep100 で最終LayerNormのゲイン
+    平均が 0.0019 (初期値の0.2%)、blocks.11.norm2 は 0.0004 まで削られており、
+    backboneが入力に依存しない定数を出す -> DINOLossのcenterがその定数へ収束 ->
+    teacher softmaxが厳密に一様 -> 勾配が厳密に0、という吸収状態に落ちていた。
+    観測されたゲインの減衰率は純粋な weight decay の予測 prod(1 - lr*wd) と数%以内で
+    一致しており、勾配ではなくwdが主因であることを定量的に確認済み。
+
+    `wd_exempt: True` を立てたグループは lib/trainer/loop.py のwdコサイン
+    スケジュール(`--weight_decay_end`)でも上書きされない。
+
+    --wd_apply_to_bias_norm を付けると従来通り全パラメータへwdを掛ける
+    (SimSiam原論文のResNetレシピはbias/BNを除外しないため、その再現用)。
+    """
+    if getattr(args, 'wd_apply_to_bias_norm', False):
+        return groups
+    out = []
+    for g in groups:
+        decay, no_decay = [], []
+        for p in g['params']:
+            (no_decay if p.ndim <= 1 else decay).append(p)
+        if decay:
+            out.append({**g, 'params': decay})
+        if no_decay:
+            out.append({**g, 'params': no_decay, 'weight_decay': 0.0, 'wd_exempt': True,
+                        'weight_decay_filter': True})
+    return out
+
+
 # prepare model
 def prepare_model(
         ctx: RunContext,
@@ -96,6 +135,8 @@ def prepare_model(
         model_kwargs["momentum_end"] = args.dino_momentum_end
         model_kwargs["teacher_temp_end"] = args.dino_teacher_temp_end
         model_kwargs["teacher_temp_warmup_epochs"] = args.dino_teacher_temp_warmup_epochs
+        model_kwargs["out_dim"] = args.dino_out_dim
+        model_kwargs["drop_path_rate"] = args.dino_drop_path
     model, criterion = ssl_class.prepare_model(backbone, head_size=size, **model_kwargs)
     if args.model_path:
         # warm start: load weights only (student+teacher, via model.state_dict()) from a
@@ -120,7 +161,7 @@ def prepare_model(
         lr_bias = args.lr_bias if args.lr_bias > 0 else lr
         optimizer = build_optimizer(ctx, [
             {'params': weights},
-            {'params': biases, 'lr': lr_bias, 'weight_decay': 0.0,
+            {'params': biases, 'lr': lr_bias, 'weight_decay': 0.0, 'wd_exempt': True,
              'weight_decay_filter': True, 'lars_adaptation_filter': True},
         ], lr=lr, weight_decay=weight_decay)
         print(f"LARS param-groups: weights(lr={lr:.3g},wd={weight_decay:.1e}) | "
@@ -132,10 +173,10 @@ def prepare_model(
         for p in model.parameters():
             if p.requires_grad:
                 (pred_params if id(p) in pred_ids else base_params).append(p)
-        optimizer = build_optimizer(ctx, [
+        optimizer = build_optimizer(ctx, _wd_groups(args, [
             {'params': base_params},
             {'params': pred_params, 'fix_lr': True},
-        ], lr=lr, weight_decay=weight_decay)
+        ]), lr=lr, weight_decay=weight_decay)
         print(f"SimSiam fix-pred-lr: predictor held at constant lr={lr:.3g}")
     elif layer_wise_lr:
         backbone_param_ids = set(id(p) for p in model.backbone.parameters())
@@ -147,15 +188,22 @@ def prepare_model(
                     backbone_params.append(p)
                 else:
                     head_params.append(p)
-        optimizer = build_optimizer(ctx, [
+        optimizer = build_optimizer(ctx, _wd_groups(args, [
             {'params': backbone_params, 'lr': lr * backbone_lr_ratio},
             {'params': head_params, 'lr': lr}
-        ], lr=lr, weight_decay=weight_decay)
+        ]), lr=lr, weight_decay=weight_decay)
         print(f"Using layer-wise learning rate. Backbone LR: {lr * backbone_lr_ratio:.2e}, Head LR: {lr:.2e}")
     else:
-        parameters = filter(lambda p: p.requires_grad, model.parameters())
-        optimizer = build_optimizer(ctx, parameters, lr=lr, weight_decay=weight_decay)
-    
+        parameters = [p for p in model.parameters() if p.requires_grad]
+        optimizer = build_optimizer(ctx, _wd_groups(args, [{'params': parameters}]),
+                                    lr=lr, weight_decay=weight_decay)
+    if weight_decay > 0:
+        n_exempt = sum(len(g['params']) for g in optimizer.param_groups if g.get('wd_exempt'))
+        n_decayed = sum(len(g['params']) for g in optimizer.param_groups if not g.get('wd_exempt'))
+        note = " [EXEMPTION OFF: --wd_apply_to_bias_norm]" if n_exempt == 0 else ""
+        print(f"weight decay {weight_decay:.3g}{'->' + format(args.weight_decay_end, '.3g') if args.weight_decay_end > 0 else ''}: "
+              f"decayed {n_decayed} tensors / exempt (bias & ndim<=1) {n_exempt} tensors{note}")
+
     scheduler = CosineLRScheduler(
         optimizer, t_initial=num_epoch, lr_min=args.lr_min,
         warmup_t=args.warmup_t, warmup_lr_init=args.warmup_lr_init, warmup_prefix=True)
@@ -165,7 +213,11 @@ def prepare_model(
     )
     collapse_monitor = None
     if args.collapse_early_stop:
+        # out_dim を渡すと「train_loss が ln(out_dim) に張り付いた＝一様崩壊」を
+        # 判定できる(DINO/SwAV等のprototype系)。持たない手法では None のままで
+        # uniformity と effective_rank だけで判定する。
         collapse_monitor = sslmodel.utils.CollapseMonitor(
             rank_threshold=args.collapse_rank_threshold, patience=args.collapse_patience,
+            out_dim=getattr(ssl_class, 'out_dim', 0),
         )
     return model, criterion, optimizer, scheduler, early_stopping, collapse_monitor

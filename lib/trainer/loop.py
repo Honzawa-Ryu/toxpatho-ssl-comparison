@@ -23,6 +23,7 @@ from lib.trainer.data import prepare_data
 
 def train_epoch(ctx: RunContext, model, data_loader, criterion, optimizer, epoch, num_epoch=None):
     ssl_class = ctx.ssl_class
+    clip_grad = getattr(ctx.args, 'clip_grad', 0.0)
     model.train()
     train_batch_loss = []
     grad_norms = []
@@ -41,17 +42,32 @@ def train_epoch(ctx: RunContext, model, data_loader, criterion, optimizer, epoch
         with torch.amp.autocast(device_type="cuda", dtype=torch.bfloat16):
             loss = ssl_class.calc_loss(model, data, criterion)
         loss.backward()
+        # total grad L2 norm with a SINGLE device sync (old code did .item() per
+        # parameter -> ~150 GPU->CPU syncs/iter, serializing the step). Identical value.
+        # クリッピングより前に測る(公式DINOと同じ)ので、ログのgrad_normは常に
+        # 「クリップ前」の値=スパイク検出用の生の指標のまま。
+        grads = [p.grad.detach() for p in model.parameters() if p.grad is not None]
+        if grads:
+            per_param_norms = torch._foreach_norm(grads)
+            grad_norm = torch.norm(torch.stack(per_param_norms)).item()
+            if clip_grad > 0:
+                # DINO公式(utils.clip_gradients)と同じ「パラメータ毎」のクリップ。
+                # 全体ノルムでの clip_grad_norm_ ではない点に注意。
+                # 係数はデバイス上のテンソルのまま掛ける(.item()しない)ので
+                # GPU->CPU同期は増えない。
+                for g_, n_ in zip(grads, per_param_norms):
+                    g_.mul_(torch.clamp(clip_grad / (n_ + 1e-6), max=1.0))
+        else:
+            grad_norm = 0.0
+        grad_norms.append(grad_norm)
         # DDPラップ後、DINO等のカスタムメソッド(cancel_last_layer_gradients /
         # update_moving_average)は .module 側にしか存在しないため unwrap 経由で呼ぶ
         # （DistributedDataParallel は任意属性を .module へフォワードしない）。
+        # 公式DINOと同じ順序: clip_gradients -> cancel_gradients_last_layer -> step
+        # （逆にすると、grad=Noneにしたはずのlast_layerがクリップ処理で復活しうる）。
         raw_model = distributed.unwrap(model)
         if hasattr(raw_model, 'cancel_last_layer_gradients'):
             raw_model.cancel_last_layer_gradients(epoch)  # DINO anti-collapse (early epochs)
-        # total grad L2 norm with a SINGLE device sync (old code did .item() per
-        # parameter -> ~150 GPU->CPU syncs/iter, serializing the step). Identical value.
-        grads = [p.grad.detach() for p in model.parameters() if p.grad is not None]
-        grad_norm = torch.norm(torch.stack(torch._foreach_norm(grads))).item() if grads else 0.0
-        grad_norms.append(grad_norm)
         optimizer.step()
         if hasattr(raw_model, 'update_moving_average'):
             raw_model.update_moving_average()
@@ -89,6 +105,30 @@ def diagnose_gpu_bound(ctx: RunContext, model, criterion, optimizer, batch_size,
     samples_per_sec = n_steps * batch_size / elapsed
     print(f"[diagnose_gpu_bound] {n_steps} steps, {elapsed:.2f}s, {samples_per_sec:.1f} samples/sec (pure GPU compute, no dataloader)")
     return samples_per_sec
+
+@torch.no_grad()
+def norm_gain_mean(model):
+    """backbone の LayerNorm/BatchNorm ゲイン(ndim==1 の `*.weight`)の平均。
+
+    weight decay がこれらに掛かっていると、対抗する勾配がほとんど無いため
+    毎step `γ <- γ(1 - lr*wd)` で単調に削られ、backboneが実質的に消滅する
+    (2026-08-31にDINO恒久崩壊の主因として同定。0017はep100でこの値が0.0019
+    ＝初期値の0.2%まで削られていた)。初期値1.0から明確に下がり続けていたら
+    weight decayの param group 設定を疑うこと (lib/trainer/model.py:_wd_groups)。
+    毎epochログに出るので、崩壊してから気付く事態を防げる。
+    """
+    raw = distributed.unwrap(model)
+    base = raw
+    for attr in ('student_backbone', 'backbone'):
+        if hasattr(raw, attr):
+            base = getattr(raw, attr)
+            break
+    gains = [p.detach().float().mean() for n, p in base.named_parameters()
+             if p.ndim == 1 and n.endswith('.weight')]
+    if not gains:
+        return float('nan')
+    return torch.stack(gains).mean().item()
+
 
 @torch.no_grad()
 def compute_val_loss(ctx: RunContext, model, criterion, loader, max_batches=40):
@@ -138,12 +178,15 @@ def train(ctx: RunContext, model, criterion, optimizer, scheduler, early_stoppin
                 if g.get('fix_lr'):
                     g['lr'] = args.lr
         # DINO: cosine weight-decay schedule (weight_decay -> weight_decay_end).
+        # wd_exempt(bias/ndim<=1)のグループは絶対に上書きしないこと。ここで上書きすると
+        # lib/trainer/model.py:_wd_groups の除外が毎epoch無効化され、LayerNormゲインが
+        # 削られて恒久崩壊する経路がそのまま復活する。
         if args.weight_decay_end > 0:
             import math
             wd = args.weight_decay_end + 0.5 * (args.weight_decay - args.weight_decay_end) * \
                  (1 + math.cos(math.pi * epoch / max(1, num_epoch)))
             for g in optimizer.param_groups:
-                if not g.get('fix_lr'):
+                if not g.get('fix_lr') and not g.get('wd_exempt'):
                     g['weight_decay'] = wd
         train_loss.append(train_epoch_loss)
         current_lr = optimizer.param_groups[0]['lr']
@@ -157,9 +200,12 @@ def train(ctx: RunContext, model, criterion, optimizer, scheduler, early_stoppin
             teacher_state += f', teacher_momentum: {_raw.momentum:.6f}'
         if hasattr(criterion, 'teacher_temp'):
             teacher_state += f', teacher_temp: {criterion.teacher_temp:.4f}'
+        # LayerNormゲイン平均: weight decayによるbackbone消滅の早期検知用(毎epoch)
+        ln_gain = norm_gain_mean(model)
         LOGGER.logger.info(
             f'Epoch: {epoch + 1}, train_loss: {train_epoch_loss:.4f}, '
-            f'lr: {current_lr:.2e}, grad_norm: {grad_norm:.4f}{teacher_state}'
+            f'lr: {current_lr:.2e}, grad_norm: {grad_norm:.4f}, '
+            f'ln_gain: {ln_gain:.4f}{teacher_state}'
         )
         LOGGER.logger.info('elapsed_time: {:.2f} min'.format((time.time() - start)/60))
         if run:
@@ -167,6 +213,7 @@ def train(ctx: RunContext, model, criterion, optimizer, scheduler, early_stoppin
                 "train_loss": train_epoch_loss,
                 "learning_rate": current_lr,
                 "grad_norm": grad_norm,
+                "norm_gain_mean": ln_gain,
             }, step=epoch)
         # 崩壊監視(effective_rank等)はrank0のみで実行する。eval_loaderは全rank同一
         # (data.py: split_by_rank=False)なので結果はどのrankで計算しても同じであり、
@@ -189,7 +236,9 @@ def train(ctx: RunContext, model, criterion, optimizer, scheduler, early_stoppin
             if run:
                 run.log(ssl_metrics, step=epoch)
             if collapse_monitor is not None:
-                collapse_monitor.update(ssl_metrics.get("effective_rank"))
+                collapse_monitor.update(ssl_metrics.get("effective_rank"),
+                                        uniformity=ssl_metrics.get("uniformity"),
+                                        train_loss=train_epoch_loss)
         # held-out validation pretext loss on the val fold (overfitting monitor)
         val_epoch_loss = compute_val_loss(ctx, model, criterion, eval_loader, max_batches=args.val_max_batches)
         LOGGER.logger.info(
@@ -244,8 +293,9 @@ def train(ctx: RunContext, model, criterion, optimizer, scheduler, early_stoppin
             collapse_flag = distributed.all_reduce_mean(collapse_flag)
             if collapse_flag.item() > 0:
                 LOGGER.logger.info(
-                    f'Collapse detected (effective_rank < {args.collapse_rank_threshold} for '
-                    f'{args.collapse_patience} consecutive checks) at Epoch: {epoch} — aborting to save compute'
+                    f'Collapse detected for {args.collapse_patience} consecutive checks '
+                    f'at Epoch: {epoch} — aborting to save compute'
+                    + (f' [{collapse_monitor.reason}]' if collapse_monitor.reason else '')
                 )
                 # early_stopping.path (best val_loss checkpoint.pt) still holds the last
                 # pre-collapse snapshot; restore it so model_ssl.pt isn't the collapsed weights.
