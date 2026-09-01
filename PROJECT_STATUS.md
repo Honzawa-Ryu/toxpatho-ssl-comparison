@@ -3,7 +3,7 @@
 > **重要: このファイルは毎回の作業後に必ず更新すること。**
 > 次セッション開始時にはまずこのファイルを読んで状況を把握する。
 
-最終更新: 2026-08-31（セッション9: **DINO崩壊の原因を特定し修正**。詳細は下記「🦕 DINO崩壊調査」）
+最終更新: 2026-09-01（セッション9: DINO崩壊の原因を特定し修正 → 0025で**wd修正の効果を確認**したが別要因の崩壊が残存。下記「🦕 DINO崩壊調査」）
 
 > **やること・研究方針の一覧は [TODO.md](TODO.md) を参照**（試験間差除去テーマC章を含む）。
 
@@ -115,23 +115,73 @@ DINOの目的関数だけ**だから。MAEの画素再構成やBTの冗長性低
 `teacher_momentum` / `teacher_temp` の実測値を出すようにしたので、今後は
 「有効にしたつもりで固定のまま」を必ず検出できる。
 
+### 0025 の結果（2026-08-31, job 3271936）— wd修正は成功、別要因の崩壊が残存
+
+**weight decay の修正は効いた（確認済み）**
+
+```
+weight decay 0.04->0.4: decayed 55 tensors / exempt (bias & ndim<=1) 102 tensors
+```
+
+| epoch | 5 | 10 | 15 | 20 |
+|---|---|---|---|---|
+| **0025（修正後）の ln_gain** | 1.0003 | 0.9866 | 0.9951 | **0.9955** |
+| 0023（修正前）の ln_gain | 0.9620 | 0.7711 | 0.5379 | **0.3731** |
+
+LayerNormゲインの侵食は完全に停止。head の重み膨張も無し（`mlp.0` の重みノルムが
+0023では 24→101→159 と暴走したのに対し 0025 は 25→35→25）。**恒久崩壊の主因は解消。**
+
+新しい崩壊検知も設計どおり動作し、ep19 で abort した:
+
+```
+Collapse detected for 2 consecutive checks at Epoch: 19 — aborting to save compute
+[train_loss 11.0904 >= ln(out_dim) x 0.999 (= 11.0793) — uniform collapse;
+ uniformity -0.0000 > -0.05 — all samples collapsed onto one point]
+```
+
+旧 `eff_rank` 基準（ep20時点で21.24）なら発火せず48h回し切っていた。
+
+**しかし別の崩壊が残っている**
+
+ep11→12 で train_loss が ln(65536)=11.0904 に張り付き、grad_norm 1e-4 /
+feat_std 0.018 / uniformity 0.0000。**このとき ln_gain は 0.9692 で固定されたまま**
+なので weight decay 起因ではない別要因。loss は ep1-11 で
+10.79 / 8.74 / 10.81 / 10.65 / 10.03 / 10.62 / 10.11 / 9.47 / 9.08 / 10.21 / 10.42 と
+振動するだけで、**一度も下降トレンドに乗らなかった**（0023 は out_dim 8192 で
+ep2 に 4.55 まで下降し、最終 1.72 まで到達していた）。
+
+`outputs/0025.../model_ssl.pt` は abort 時に復元された checkpoint.pt
+（val最良 = ep9, val_loss 8.60）で、事前学習済みモデルとしては使用不可。
+
+**公式 main_dino.py の help に該当する記述**（2026-09-01 に確認）
+
+| 引数 | 公式の help | 0025 の設定 |
+|---|---|---|
+| `clip_grad` | 「Clipping with norm **.3 ~ 1.0** can help optimization for **larger ViT architectures**」 | **3.0**（argparse既定）。実測 grad_norm 0.25〜3.15 なので**ほぼ発火していなかった** |
+| `freeze_last_layer` | 「Try increasing this value **if the loss does not decrease**」 | 1（公式既定）。0025 の症状そのもの |
+| `use_fp16` | 「loss が不安定なとき、**大きいViTを使うとき**は mixed precision を切ることを推奨」 | bf16 autocast。bf16 は fp16 より仮数部が3bit少なく、centering の `t - center` に不利 |
+| `out_dim` | 「**複雑で大規模なデータセット**では 65k のような大きい値が良い」 | 65536。TG-GATE の H&E パッチは ImageNet ほど多様ではない |
+
 ### 次の一手
 
-1. **`0025_20260831_dino_paper_faithful` を投入**（作成済・`make preflight` 通過済）。
-   4ノード / 480 epoch / walltime 48h、`--resume` 付きなので完走まで再投入する。
+1. **`0026_20260901_dino_clipgrad03` を投入**（作成済・`make preflight` 通過済）。
+   0025 からの変更は **`--clip_grad 3.0` → `0.3` の1点のみ**（公式が larger ViT に
+   推奨する範囲）。他は完全に同一なので、崩壊の有無で clip_grad の寄与を切り分けられる。
    ```
-   mkdir -p logs/0025_20260831_dino_paper_faithful
-   qsub experiments/0025_20260831_dino_paper_faithful/run_slurm.sh
+   mkdir -p logs/0026_20260901_dino_clipgrad03
+   qsub experiments/0026_20260901_dino_clipgrad03/run_slurm.sh
    ```
-2. **起動直後に必ず確認すること**:
-   - stdout の `weight decay 0.04->0.4: decayed N tensors / exempt (bias & ndim<=1) M tensors`。
-     **M が 0 なら除外が効いていない＝同じ崩壊を繰り返す。**
-   - 毎epochログの `ln_gain`（初期値1.0付近から下がり続けないこと）、
-     `teacher_momentum` / `teacher_temp` の実測値。
-   - 崩壊の loss 基準は out_dim 65536 なので **ln(65536) = 11.0904**（8192の9.0109ではない）。
-3. 0017/0021/0023/0024 の重みは全て破棄（`model_ep*.pt` は事前学習済みモデルとして使用不可）。
-   0022（0017からの継続学習）も無効。
-4. MAE / SimSiam の実験（0013/0016/0018/0014）は未実行のまま。修正後の設定で投入すること。
+   崩壊すれば `--collapse_early_stop` が 2.5h 程度で abort するので 48h 枠で投げてよい。
+2. 0026 が駄目なら次の候補（未着手）:
+   - `--dino_freeze_last_layer 3`（公式 help「loss が下がらないなら増やせ」。**CLI未公開なので引数追加が必要**）
+   - `out_dim` を 8192 に戻す（0023 は 8192 で loss 1.72 まで下降した実績あり）
+   - AMPを切る / 損失計算だけ fp32
+3. 起動直後に必ず確認すること:
+   - stdout の `exempt (bias & ndim<=1) M tensors` の M が 0 でないこと
+   - 毎epochの `ln_gain` が 1.0 付近を維持していること（下がり続けたら wd の再発）
+   - 崩壊の loss 基準は out_dim 65536 なので **ln(65536) = 11.0904**
+4. 0017/0021/0023/0024/0025 の重みは全て事前学習済みモデルとして使用不可。
+5. MAE / SimSiam の実験（0013/0016/0018/0014）は未実行のまま。修正後の設定で投入すること。
 
 ### epoch数は480が論文相当（100や300ではない）
 
