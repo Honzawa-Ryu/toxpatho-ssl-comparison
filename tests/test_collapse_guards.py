@@ -143,6 +143,32 @@ for loss in (4.6179, 2.9739, 1.7228):
     m.update(142.81, uniformity=-0.3084, train_loss=loss)
 _check("学習が進んでいる区間を誤検知しない", not m.collapsed)
 
+# 2026-09-01の誤検知の再発防止。0026 の ep15/ep20 実測値:
+# loss は天井 ln(65536)=11.0904 の26%まで下降、eff_rank も 195->237 と上昇して
+# いたのに、uniformity -0.0108 だけで abort した。補助指標は損失が天井付近の
+# ときだけ有効にする。
+LN65536 = float(np.log(65536))
+m = CollapseMonitor(rank_threshold=5.0, patience=2, out_dim=65536)
+m.update(195.46, uniformity=-0.0157, train_loss=3.4830)
+m.update(237.18, uniformity=-0.0108, train_loss=2.8539)
+_check("損失が下降中なら uniformity だけでは発火しない（0026の誤検知）",
+       not m.collapsed)
+# 同じ uniformity でも、損失が天井付近なら補助指標として機能すること
+m = CollapseMonitor(rank_threshold=5.0, patience=2, out_dim=65536)
+m.update(237.18, uniformity=-0.0108, train_loss=LN65536 * 0.95)
+m.update(237.18, uniformity=-0.0108, train_loss=LN65536 * 0.95)
+_check("損失が天井付近なら uniformity が補助指標として効く",
+       m.collapsed and "one point" in m.reason)
+# eff_rank も同じゲートに従うこと（損失が健全なら単独で止めない）
+m = CollapseMonitor(rank_threshold=5.0, patience=1, out_dim=65536)
+m.update(1.5, uniformity=-0.9, train_loss=2.8539)
+_check("損失が下降中なら eff_rank だけでも発火しない", not m.collapsed)
+# 一次指標は補助指標のゲートに関係なく単独で発火すること
+m = CollapseMonitor(rank_threshold=5.0, patience=1, out_dim=65536)
+m.update(237.18, uniformity=-0.9, train_loss=LN65536)
+_check("train_loss が天井なら他が健全でも発火する",
+       m.collapsed and "uniform collapse" in m.reason)
+
 # 全サンプルが1点に潰れた場合（uniformity -> 0）。out_dim を持たない手法用の経路
 m = CollapseMonitor(rank_threshold=5.0, patience=2, out_dim=0)
 _check("out_dim 未指定なら loss 判定は無効", m.loss_ceiling is None)

@@ -458,7 +458,9 @@ class CollapseMonitor:
     check, not a stop criterion, for the main `paper_*` comparison runs; this
     class is opt-in (see `--collapse_early_stop`) and left unused there.
 
-    判定は3指標のOR（どれか1つでも patience 回連続で該当したら崩壊とみなす）:
+    判定は3指標で行い、patience 回連続で該当したら崩壊とみなす。ただし
+    **1は単独で発火するが、2・3は「損失が天井の secondary_ratio 以上」のときだけ
+    有効**（2026-09-01の誤検知対策。下記 secondary_enabled のコメント参照）:
 
     1. `train_loss >= ln(out_dim) * loss_ratio`
        DINOの一様崩壊。student/teacherがともに一様分布になると損失は厳密に
@@ -467,6 +469,9 @@ class CollapseMonitor:
     2. `uniformity > uniformity_threshold`
        Wang & Isola の uniformity は「全サンプルが1点に潰れると0に漸近」する。
        DINO以外(out_dimを持たない手法)でも効く汎用指標。
+       **ただし尺度が out_dim に強く依存する**ので、閾値は out_dim を変えたら
+       較正し直すこと(既定 -0.05 は out_dim 8192 基準。65536 では健全時でも
+       -0.01 程度まで0に寄る)。
     3. `effective_rank < rank_threshold`
        従来の指標。**鈍すぎるので単独では使い物にならない**: 0023 ep5 は
        loss=ln(8192)ちょうど・feat_std 0.055 と壊滅状態なのに eff_rank は 31.99
@@ -479,12 +484,14 @@ class CollapseMonitor:
     """
     def __init__(self, rank_threshold: float = 5.0, patience: int = 2,
                  out_dim: int = 0, loss_ratio: float = 0.999,
-                 uniformity_threshold: float = -0.05):
+                 uniformity_threshold: float = -0.05,
+                 secondary_ratio: float = 0.9):
         self.rank_threshold = rank_threshold
         self.patience = patience
         self.loss_ceiling = float(np.log(out_dim)) if out_dim and out_dim > 1 else None
         self.loss_ratio = loss_ratio
         self.uniformity_threshold = uniformity_threshold
+        self.secondary_ratio = secondary_ratio
         self.counter = 0
         self.collapsed = False
         self.reason = ''
@@ -501,11 +508,26 @@ class CollapseMonitor:
                 and train_loss >= self.loss_ceiling * self.loss_ratio:
             reasons.append(f'train_loss {train_loss:.4f} >= ln(out_dim) x {self.loss_ratio} '
                            f'(= {self.loss_ceiling * self.loss_ratio:.4f}) — uniform collapse')
-        if _valid(uniformity) and uniformity > self.uniformity_threshold:
-            reasons.append(f'uniformity {uniformity:.4f} > {self.uniformity_threshold} '
-                           f'— all samples collapsed onto one point')
-        if _valid(effective_rank) and effective_rank < self.rank_threshold:
-            reasons.append(f'effective_rank {effective_rank:.2f} < {self.rank_threshold}')
+
+        # 補助指標(uniformity / effective_rank)は経験的な閾値なので、単独では止めない。
+        # 「損失が天井付近にある」ことを必要条件にする。
+        # 2026-09-01の事故: 0026 は loss 2.85 (= ln(65536) の26%)、eff_rank 237 と
+        # 明確に学習が進んでいたのに、uniformity -0.0108 だけで ep19 に abort した。
+        # uniformity は out_dim 65536 のヘッド生出力に対して計算されており、
+        # 65536本のプロトタイプが256次元ボトルネックに詰まっている以上サンプル間の
+        # ロジットは構造的にほぼ平行になる = 0 に寄る。閾値 -0.05 は out_dim 8192 の
+        # ログから決めた値で、out_dim を変えた時点で無効になっていた。
+        # 一方 train_loss = ln(out_dim) は「student/teacherがともに一様なら損失は
+        # 厳密にln(K)、勾配も厳密に0」という代数的事実なのでout_dim非依存に効く。
+        secondary_enabled = True
+        if self.loss_ceiling is not None and _valid(train_loss):
+            secondary_enabled = train_loss >= self.loss_ceiling * self.secondary_ratio
+        if secondary_enabled:
+            if _valid(uniformity) and uniformity > self.uniformity_threshold:
+                reasons.append(f'uniformity {uniformity:.4f} > {self.uniformity_threshold} '
+                               f'— all samples collapsed onto one point')
+            if _valid(effective_rank) and effective_rank < self.rank_threshold:
+                reasons.append(f'effective_rank {effective_rank:.2f} < {self.rank_threshold}')
 
         if reasons:
             self.counter += 1
