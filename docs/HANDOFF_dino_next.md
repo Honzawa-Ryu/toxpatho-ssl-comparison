@@ -177,4 +177,4 @@ weight decay の param group 修正はこれらにも効くので、修正後の
 | `581e53d` | 原因修正（wd の param group 分離）＋ clip_grad / ln_gain ログ / 崩壊検知の刷新 |
 | `99feeeb` | exp 26（clip_grad 0.3） |
 | `6dd33a9` | 崩壊検知の誤検知修正（補助指標を単独発火させない） |
-| （本コミット） | `--dino_fp32_head` / `--dino_freeze_last_layer` の追加、`methods_paper.yaml` の DINO 行差し替え |
+| `9a091ae` | `--dino_fp32_head` / `--dino_freeze_last_layer` の追加、`methods_paper.yaml` の DINO 行差し替え |
