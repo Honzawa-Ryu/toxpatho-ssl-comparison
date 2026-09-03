@@ -103,6 +103,15 @@ def build_parser() -> argparse.ArgumentParser:
     # 0024以前は 8192 / 0.0 で走っていたため、既定は据え置きにして明示指定で論文値にする。
     parser.add_argument('--dino_out_dim', type=int, default=8192)      # 公式: 65536 (プロトタイプ数。崩壊時の loss = ln(out_dim))
     parser.add_argument('--dino_drop_path', type=float, default=0.0)   # 公式: 0.1 (stochastic depth。studentのみに適用)
+    # 公式(main_dino.py)の --freeze_last_layer と同義・同既定。最初のN epochだけ
+    # ヘッド最終層の勾配を捨てて backbone を先に安定させる(epochは0始まりなので
+    # 1 = epoch 0 のみ)。公式の助言は「loss が下がらないとき 3 を試す」。
+    parser.add_argument('--dino_freeze_last_layer', type=int, default=1)  # 公式: 1
+    # ヘッド(DINOHead)と損失(DINOLoss)だけ autocast を外して fp32 で計算する。
+    # backbone は bf16 のままなので速度低下は小さい。公式 main_dino.py の
+    # --use_fp16 help「loss が不安定なとき、大きい ViT を使うときは mixed precision を
+    # 切ることを推奨」に対応する opt-in (docs/HANDOFF_dino_next.md タスク2-B)。
+    parser.add_argument('--dino_fp32_head', action='store_true')
     parser.add_argument('--n_prototypes', type=int, default=512)       # SwAV: number of prototypes (paper: 3000)
     parser.add_argument('--n_global_crops', type=int, default=2)       # multicrop global views
     parser.add_argument('--n_local_crops', type=int, default=0)        # multicrop local views (SwAV 6 / DINO 8); 0 = disabled

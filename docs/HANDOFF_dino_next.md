@@ -42,10 +42,19 @@ torch.save({k[len("student_backbone."):]: v for k, v in sd.items()
 
 `scripts/analysis/methods_paper.yaml` に主比較4手法（Barlow Twins / DINO / MAE / SimSiam）の対応表がある。
 
-- **DINO の行を上記チェックポイントに差し替えること。**
-- ⚠️ ほかの3手法の `model_path` は**別クラスタの絶対パス**
-  （`/workspace/andre01/honzawa/wsi-ad/outputs/...`）のままになっている。
-  実際にそこに重みがあるか未確認。無ければ DINO 単独での評価（ep20 / ep50 / ep85 の推移比較）から始めるとよい。
+- **DINO の行は上記 ep85 に差し替え済み**（2026-09-03）。`model_path` は
+  リポジトリルートからの相対パス `outputs/0026_20260901_dino_clipgrad03/model_ep85.pt`。
+  `lib/model/zoo.py: prepare_model_eval` 経由で読めること（466キー / out_dim 65536 が
+  形状から復元され、768次元の pooled 特徴が出ること）を実機で確認済み。
+- ⚠️ **ほかの3手法は現状すべて `[skip]` される。** `model_path` が別クラスタ（andre01）の
+  絶対パス `/workspace/andre01/honzawa/wsi-ad/outputs/...` のままで、Miyabi には
+  `/workspace` 自体が存在しないことを確認した（2026-09-03）。
+  `embeddings.run` は存在しないチェックポイントを黙って飛ばして続行するので、
+  **このまま回すと「4手法比較」ではなく DINO 単独になる**。実行後は
+  `extract_summary.json` の `embeddings` に何が入ったかを必ず確認すること。
+- したがって当面は DINO 単独評価（ep20 / ep50 / ep85 の推移比較）から始めるのが現実的。
+  その場合は `methods_paper.yaml` を複製し、`name` を `dino_ep20` などに分けて
+  同じ `ssl_name: dino` で3行並べればよい（`name` は出力ファイル名 `emb_{name}.npy` になるだけ）。
 
 ### 実行
 
@@ -94,21 +103,39 @@ lr 1.87e-3 の高原部で破綻した。`ln_gain` 0.605 / `eff_rank` 318 と、
 ImageNet-1k での linear scaling 値だが、本データは **800枚のWSI由来80万パッチ**で多様性が桁違いに低い。
 論文からの逸脱になるので、論文には「安定性のため」と明記する。
 
-### B: 損失計算を fp32 にする（要実装）
+### B: 損失計算を fp32 にする（実装済み・投入待ち）
 
 公式 `main_dino.py` の `use_fp16` help に「**loss が不安定なとき、大きい ViT を使うときは
 mixed precision を切ることを推奨**」とある。現状は bf16 autocast（仮数部8bit）で、DINO の損失は
 `t - center` という**近い値どうしの差**を取ってから `÷0.04` で25倍に増幅する（桁落ち）。
 
 backbone は bf16 のまま、**ヘッドと損失だけ fp32** にすれば速度低下は小さい。
-`lib/sslmodel/models/dino.py: DINO._forward_views` で `head(feat)` の前に
-`feat.float()` し、`DINOLoss.forward` を `torch.amp.autocast(enabled=False)` で囲む。
-opt-in の CLI フラグ（例 `--dino_fp32_head`）にして、既存ランと比較可能にすること。
+
+**→ `--dino_fp32_head` として実装済み（2026-09-03）。** run_slurm.sh の
+`RUN_COMMAND` にこのフラグを足すだけでよい（既定は従来どおり off なので、
+付けなければ既存ランと同一挙動）。
+
+```diff
+     --dino_out_dim 65536 --dino_drop_path 0.1 \
++    --dino_fp32_head \
+```
+
+実装は `DINO._forward_views` でヘッドを `torch.amp.autocast(enabled=False)` の
+スコープに入れ、`DINOLoss` 側も同じスコープで計算する（`lib/sslmodel/models/dino.py`）。
+テストは `lib/sslmodel/tests/test_dino_fp32_head.py`。
+
+補足（実測）: timm ViT の末尾は LayerNorm で、LayerNorm は autocast の fp32 ポリシー
+対象なので **backbone の出力はフラグに関係なく元から fp32**。実際に効くのは
+ヘッド内の Linear（bf16 → fp32）と、`t - center` の引き算のほう。backbone 内部の
+行列積は bf16 のままなので速度への影響は小さい。
 
 ### 3番手以降（A・Bが効かなかったら）
 
 1. `out_dim` を 8192 に戻す（公式 help は 65k を「複雑で大規模なデータセット向け」と条件付きにしている）
-2. `--dino_freeze_last_layer 3`（公式の助言は「loss が下がらないとき」向けで、今回の症状とは合わない。**CLI 未公開なので引数追加が必要**）
+2. `--dino_freeze_last_layer 3`（公式の助言は「loss が下がらないとき」向けで、今回の症状とは合わない）
+   **→ CLI に公開済み（2026-09-03）。** 公式 `main_dino.py` の `--freeze_last_layer` と
+   同義・同既定（1）。epoch は0始まりなので `3` を渡すと epoch 0/1/2 の3エポック分、
+   ヘッド最終層の勾配を捨てる。
 
 ---
 
@@ -150,3 +177,4 @@ weight decay の param group 修正はこれらにも効くので、修正後の
 | `581e53d` | 原因修正（wd の param group 分離）＋ clip_grad / ln_gain ログ / 崩壊検知の刷新 |
 | `99feeeb` | exp 26（clip_grad 0.3） |
 | `6dd33a9` | 崩壊検知の誤検知修正（補助指標を単独発火させない） |
+| （本コミット） | `--dino_fp32_head` / `--dino_freeze_last_layer` の追加、`methods_paper.yaml` の DINO 行差し替え |

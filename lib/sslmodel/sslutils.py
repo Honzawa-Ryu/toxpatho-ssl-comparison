@@ -376,7 +376,7 @@ class DINO:
                       freeze_last_layer_epochs: int = 1,
                       momentum_end=None, teacher_temp_end=None,
                       teacher_temp_warmup_epochs: int = 30,
-                      drop_path_rate: float = 0.0):
+                      drop_path_rate: float = 0.0, fp32_head: bool = False):
         # 既定値は0017と同じ「据え置き運用」で、公式(main_dino.py の vit_base 既定)とは
         # out_dim(公式65536) と momentum(公式0.996 cosine->1.0) が異なる。
         # 論文準拠で走らせる場合は --dino_out_dim 65536 / --dino_momentum_start 0.996
@@ -388,17 +388,22 @@ class DINO:
         # momentum_end / teacher_temp_end は既定 None = 固定運用(0017と同一)。
         # 指定すると論文(Caron et al. 2021)のcosine/linearスケジュールが有効になる
         # (どちらか片方だけ有効にできるので、崩壊要因の切り分けに使える)。
+        # fp32_head=True でヘッドと損失だけ autocast を外す(--dino_fp32_head)。
+        # freeze_last_layer_epochs は公式 main_dino.py の --freeze_last_layer と
+        # 同じ意味・同じ既定値1(= epoch 0 のみヘッド最終層の勾配を捨てる)。
         self.out_dim = out_dim
         model = dino.DINO(
             backbone_name="vit_base_patch16_224", out_dim=out_dim,
             momentum=momentum, n_global_crops=self.n_global_crops,
             n_local_crops=self.n_local_crops,
             freeze_last_layer_epochs=freeze_last_layer_epochs,
-            momentum_end=momentum_end, drop_path_rate=drop_path_rate)
+            momentum_end=momentum_end, drop_path_rate=drop_path_rate,
+            fp32_head=fp32_head)
         criterion = dino.DINOLoss(
             out_dim=out_dim, teacher_temp=teacher_temp, student_temp=student_temp,
             teacher_temp_end=teacher_temp_end,
-            teacher_temp_warmup_epochs=teacher_temp_warmup_epochs)
+            teacher_temp_warmup_epochs=teacher_temp_warmup_epochs,
+            fp32=fp32_head)
         criterion.to(self.DEVICE)
         model.to(self.DEVICE)
         return model, criterion

@@ -252,8 +252,24 @@ ep 90: loss 11.0904 gn 0.0002 ← 吸収状態。ep94 で abort
    「この表現は他手法と比較する価値があるか」を先に判定する。
    ⚠️ 解析パイプラインは `.tar` シャード前提で、いまの学習データ（memmap）を読めない。要修正。
 2. 安定化ランを4ノード×2本で並列（A: peak lr を 2e-3 → 1e-3 / B: ヘッドと損失を fp32）。
+   B は `--dino_fp32_head` として実装済み（2026-09-03）。run_slurm.sh に足すだけで投入できる。
 3. MAE（0013/0016/0018）と SimSiam（0014）は未実行のまま。wd 修正が効くので投入してよい。
 4. 0017/0021/0023/0024/0025 の重みは事前学習済みモデルとして使用不可。
+
+#### 2026-09-03 の作業（下流評価の準備）
+
+- `scripts/analysis/methods_paper.yaml` の **DINO 行を `0026/model_ep85.pt` に差し替えた**。
+  旧値は崩壊済みラン（`20260714_paper_dino_vitb16/model_ssl.pt`）を指していた。
+  `lib/model/zoo.py: prepare_model_eval` で読めること（out_dim 65536 を形状から復元し、
+  768次元の pooled 特徴が出る）を実機確認済み。
+- **ほかの3手法（barlowtwins / mae / simsiam）は Miyabi では読めない**ことを確認した。
+  `/workspace/andre01/...` という旧クラスタの絶対パスのままで、`/workspace` 自体が存在しない。
+  `embeddings.run` は見つからないチェックポイントを `[skip]` して続行するので、
+  **このまま回すと DINO 単独の解析になる**（沈黙して4手法比較にならない）点に注意。
+- CLI に `--dino_fp32_head`（ヘッドと損失だけ autocast を外す）と
+  `--dino_freeze_last_layer`（公式 `--freeze_last_layer` と同義・既定1）を追加した。
+  どちらも既定は従来挙動のままなので、既存ランとの比較可能性は保たれる。
+  テスト: `lib/sslmodel/tests/test_dino_fp32_head.py`（コンテナ内で `python -m unittest`）。
 
 ### epoch数は480が論文相当（100や300ではない）
 
