@@ -1,6 +1,6 @@
 # wsi-ad TODO / ロードマップ
 
-最終更新: 2026-07-10
+最終更新: 2026-09-03
 関連: [Goal.yaml](Goal.yaml) ・ [PROJECT_STATUS.md](PROJECT_STATUS.md) ・ [related_work.md](related_work.md)（先行研究サマリ）
 
 ---
@@ -22,6 +22,12 @@
 ---
 
 ## A. いま動いていること
+
+- [ ] **DINO の下流評価と安定化** → **[docs/HANDOFF_dino_next.md](docs/HANDOFF_dino_next.md)**（2026-09-03）
+      事前学習6ランが全て崩壊。主因(weight decay を bias/LayerNorm ゲインに適用)は修正済み。
+      `outputs/0026_20260901_dino_clipgrad03/model_ep85.pt` が初のまともな DINO 表現なので、
+      まずこれを下流評価してから 480 epoch 完走に投資するか判断する。
+
 - [ ] **ViT-L MAE（backbone規模プローブ）**: `experiments/20260713_000001_tggate_vitl16_mae/run_slurm.sh` 準備済み・投入待ち。
       ViT-B MAE(20260710_000001)と同一レシピでencoderのみViT-L/16化（`--model_name ViTL16`→mae_vit_large_patch16, 329.5M）。
       目的=UNIとの差のうち「アーキ規模由来」を単離。VRAM実測 bs=256で約24GB/48GB（余裕）。
