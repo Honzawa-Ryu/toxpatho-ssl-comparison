@@ -1,0 +1,109 @@
+# ============================================================
+# DINO 0026(clip_grad 0.3) の epoch 掃引用チェックポイント一覧
+#
+# `lib/analysis/embeddings.py: run()` が読む methods_config。
+# 「手法 -> チェックポイント」ではなく「同一手法の epoch -> チェックポイント」を
+# 並べる用途なので、4手法比較用の methods_paper.yaml とは分けてある。
+#
+# 0026 は ep90 で吸収状態(train_loss = ln(65536) = 11.0904, grad_norm 2e-4)に入り
+# ep94 で abort している。ep90/ep95 は崩壊後なので表現としては使えないが、
+# 指標(η²_slide / CKA)が崩壊を検出できるかの確認のため意図的に含めてある。
+# 健全な範囲は ep85 まで(PROJECT_STATUS.md「🦕 DINO崩壊調査」)。
+# ============================================================
+
+methods:
+  - name: ep005
+    ssl_name: dino
+    model_name: ViTB16
+    model_path: outputs/0026_20260901_dino_clipgrad03/model_ep5.pt
+
+  - name: ep010
+    ssl_name: dino
+    model_name: ViTB16
+    model_path: outputs/0026_20260901_dino_clipgrad03/model_ep10.pt
+
+  - name: ep015
+    ssl_name: dino
+    model_name: ViTB16
+    model_path: outputs/0026_20260901_dino_clipgrad03/model_ep15.pt
+
+  - name: ep020
+    ssl_name: dino
+    model_name: ViTB16
+    model_path: outputs/0026_20260901_dino_clipgrad03/model_ep20.pt
+
+  - name: ep025
+    ssl_name: dino
+    model_name: ViTB16
+    model_path: outputs/0026_20260901_dino_clipgrad03/model_ep25.pt
+
+  - name: ep030
+    ssl_name: dino
+    model_name: ViTB16
+    model_path: outputs/0026_20260901_dino_clipgrad03/model_ep30.pt
+
+  - name: ep035
+    ssl_name: dino
+    model_name: ViTB16
+    model_path: outputs/0026_20260901_dino_clipgrad03/model_ep35.pt
+
+  - name: ep040
+    ssl_name: dino
+    model_name: ViTB16
+    model_path: outputs/0026_20260901_dino_clipgrad03/model_ep40.pt
+
+  - name: ep045
+    ssl_name: dino
+    model_name: ViTB16
+    model_path: outputs/0026_20260901_dino_clipgrad03/model_ep45.pt
+
+  - name: ep050
+    ssl_name: dino
+    model_name: ViTB16
+    model_path: outputs/0026_20260901_dino_clipgrad03/model_ep50.pt
+
+  - name: ep055
+    ssl_name: dino
+    model_name: ViTB16
+    model_path: outputs/0026_20260901_dino_clipgrad03/model_ep55.pt
+
+  - name: ep060
+    ssl_name: dino
+    model_name: ViTB16
+    model_path: outputs/0026_20260901_dino_clipgrad03/model_ep60.pt
+
+  - name: ep065
+    ssl_name: dino
+    model_name: ViTB16
+    model_path: outputs/0026_20260901_dino_clipgrad03/model_ep65.pt
+
+  - name: ep070
+    ssl_name: dino
+    model_name: ViTB16
+    model_path: outputs/0026_20260901_dino_clipgrad03/model_ep70.pt
+
+  - name: ep075
+    ssl_name: dino
+    model_name: ViTB16
+    model_path: outputs/0026_20260901_dino_clipgrad03/model_ep75.pt
+
+  - name: ep080
+    ssl_name: dino
+    model_name: ViTB16
+    model_path: outputs/0026_20260901_dino_clipgrad03/model_ep80.pt
+
+  - name: ep085
+    ssl_name: dino
+    model_name: ViTB16
+    model_path: outputs/0026_20260901_dino_clipgrad03/model_ep85.pt
+
+  - name: ep090
+    ssl_name: dino
+    model_name: ViTB16
+    model_path: outputs/0026_20260901_dino_clipgrad03/model_ep90.pt
+
+  - name: ep095
+    ssl_name: dino
+    model_name: ViTB16
+    model_path: outputs/0026_20260901_dino_clipgrad03/model_ep95.pt
+

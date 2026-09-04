@@ -12,7 +12,7 @@
 seed: 42  # パッチ選択はRNGを使わない。k-means等の乱数は lib/analysis/common.SEED 側。
 
 # --- 手法 -> チェックポイント対応表（PROJECT_ROOT からの相対パス）---
-methods_config: scripts/analysis/methods_paper.yaml
+methods_config: scripts/analysis/dino_epochs.yaml
 
 # --- パッチ集合 ---
 # 学習と同じ WSI 単位 fold 分割の val 側だけを使う（事前学習で重みを更新して
