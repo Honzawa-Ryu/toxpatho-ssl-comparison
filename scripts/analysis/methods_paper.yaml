@@ -3,34 +3,51 @@
 #
 # `lib/analysis/embeddings.py: run()` が読む methods_config。
 # 主比較は Goal.yaml 方針1により非対照学習4手法（Barlow Twins/SimSiam/MAE/DINO）
-# に限定する。SwAV（対照学習寄り）は主比較から除外するため、ここには含めない。
+# に限定する。SwAV（対照学習寄り）は主比較から除外するため、ここには含めない
+# （学習・チェックポイント自体は 20260714_paper_swav_vitb16 として残置、参考用途）。
 #
-# 現状は DINO 単独の epoch 推移比較。理由:
-#   - 他3手法（Barlow Twins / MAE / SimSiam）の重みは旧クラスタの wsi-ad
-#     リポジトリ側にあり、この環境には存在しない（2026-09-04 に不在を確認）。
-#   - DINO 自体、事前学習6ランが全て崩壊しており、比較に出せる重みは
-#     0026（clip_grad 0.3）の崩壊前スナップショットだけ。ep90 で吸収状態に
-#     入っているので ep85 が最後の健全な点（PROJECT_STATUS.md「🦕 DINO崩壊調査」）。
-# まず「ep85 の表現が他手法と比較する価値があるか」を ep 推移で判定し、
-# 価値があると分かってから他手法の重みを揃える。
+# 同一手法の epoch 推移を並べる用途は別ファイル
+# `scripts/analysis/dino_epochs.yaml`（exp 0027 が使用）。この表は手法間比較専用。
 #
-# model_path は PROJECT_ROOT からの相対パス。旧版は別クラスタの絶対パス
-# (/workspace/andre01/honzawa/wsi-ad/...) を指しており、環境が変わった時点で
-# 全手法 skip される状態になっていた。相対パスにして同じ事故を避ける。
+# model_path はリポジトリルートからの相対パス、または絶対パス。
+# 存在しない model_path の手法は `[skip]` を出して飛ばされるので、全手法が
+# 揃う前でも回せる（= 揃っていない手法が黙って落ちる点に注意。実行後は
+# extract_summary.json の embeddings に何が入ったかを必ず確認すること。
+# なお exp 0027 の experiment.py は1つも埋め込めなければ例外で落とす）。
+#
+# ⚠️ 2026-09-04 時点で実体があるのは dino のみ。
+#   barlowtwins / mae / simsiam の3手法が指す `/workspace/andre01/honzawa/wsi-ad` は、
+#   Miyabi に無いだけでなく **andre01 側にもディレクトリごと存在しない**
+#   （2026-09-04 に andre01 で確認）。つまり「旧クラスタへ行けば取れる」ものではなく、
+#   4手法比較を成立させるには修正後の設定で再学習する必要がある（HANDOFF タスク3）。
 # ============================================================
 
 methods:
-  - name: dino_ep20
-    ssl_name: dino
+  - name: barlowtwins
+    ssl_name: barlowtwins
     model_name: ViTB16
-    model_path: outputs/0026_20260901_dino_clipgrad03/model_ep20.pt
+    # ⚠️ 実体なし（andre01 / Miyabi のどちらにも存在しない = [skip] される）
+    model_path: /workspace/andre01/honzawa/wsi-ad/outputs/20260714_paper_barlowtwins_vitb16/model_ssl.pt
 
-  - name: dino_ep50
-    ssl_name: dino
-    model_name: ViTB16
-    model_path: outputs/0026_20260901_dino_clipgrad03/model_ep50.pt
-
-  - name: dino_ep85
+  # 0026(clip_grad 0.3) の ep85 スナップショット。train_loss 1.61 / eff_rank 318 で、
+  # 本プロジェクトで初めて崩壊していない DINO 表現（ep90 で崩壊したため ep85 が最良点）。
+  # 旧 20260714_paper_dino_vitb16/model_ssl.pt は崩壊済みランなので比較に使わない。
+  # out_dim は 65536（0024以前の 8192 とは異なる）だが、
+  # `lib/sslmodel/sslutils.py: DINO.prepare_featurize_model` がチェックポイントの
+  # 形状から復元するため、ここで指定する必要はない。
+  - name: dino
     ssl_name: dino
     model_name: ViTB16
     model_path: outputs/0026_20260901_dino_clipgrad03/model_ep85.pt
+
+  - name: mae
+    ssl_name: mae
+    model_name: ViTB16
+    # ⚠️ 実体なし（andre01 / Miyabi のどちらにも存在しない = [skip] される）
+    model_path: /workspace/andre01/honzawa/wsi-ad/outputs/20260714_paper_mae_vitb16/model_ssl.pt
+
+  - name: simsiam
+    ssl_name: simsiam
+    model_name: ViTB16
+    # ⚠️ 実体なし（andre01 / Miyabi のどちらにも存在しない = [skip] される）
+    model_path: /workspace/andre01/honzawa/wsi-ad/outputs/20260714_paper_simsiam_vitb16/model_ssl.pt

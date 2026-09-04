@@ -137,6 +137,8 @@ def prepare_model(
         model_kwargs["teacher_temp_warmup_epochs"] = args.dino_teacher_temp_warmup_epochs
         model_kwargs["out_dim"] = args.dino_out_dim
         model_kwargs["drop_path_rate"] = args.dino_drop_path
+        model_kwargs["freeze_last_layer_epochs"] = args.dino_freeze_last_layer
+        model_kwargs["fp32_head"] = args.dino_fp32_head
     model, criterion = ssl_class.prepare_model(backbone, head_size=size, **model_kwargs)
     if args.model_path:
         # warm start: load weights only (student+teacher, via model.state_dict()) from a

@@ -327,8 +327,24 @@ ep 90: loss 11.0904 gn 0.0002 ← 吸収状態。ep94 で abort
    「この表現は他手法と比較する価値があるか」を先に判定する。
    ⚠️ 解析パイプラインは `.tar` シャード前提で、いまの学習データ（memmap）を読めない。要修正。
 2. 安定化ランを4ノード×2本で並列（A: peak lr を 2e-3 → 1e-3 / B: ヘッドと損失を fp32）。
+   B は `--dino_fp32_head` として実装済み（2026-09-03）。run_slurm.sh に足すだけで投入できる。
 3. MAE（0013/0016/0018）と SimSiam（0014）は未実行のまま。wd 修正が効くので投入してよい。
 4. 0017/0021/0023/0024/0025 の重みは事前学習済みモデルとして使用不可。
+
+#### 2026-09-03 の作業（下流評価の準備）
+
+- `scripts/analysis/methods_paper.yaml` の **DINO 行を `0026/model_ep85.pt` に差し替えた**。
+  旧値は崩壊済みラン（`20260714_paper_dino_vitb16/model_ssl.pt`）を指していた。
+  `lib/model/zoo.py: prepare_model_eval` で読めること（out_dim 65536 を形状から復元し、
+  768次元の pooled 特徴が出る）を実機確認済み。
+- **ほかの3手法（barlowtwins / mae / simsiam）は Miyabi では読めない**ことを確認した。
+  `/workspace/andre01/...` という旧クラスタの絶対パスのままで、`/workspace` 自体が存在しない。
+  `embeddings.run` は見つからないチェックポイントを `[skip]` して続行するので、
+  **このまま回すと DINO 単独の解析になる**（沈黙して4手法比較にならない）点に注意。
+- CLI に `--dino_fp32_head`（ヘッドと損失だけ autocast を外す）と
+  `--dino_freeze_last_layer`（公式 `--freeze_last_layer` と同義・既定1）を追加した。
+  どちらも既定は従来挙動のままなので、既存ランとの比較可能性は保たれる。
+  テスト: `lib/sslmodel/tests/test_dino_fp32_head.py`（コンテナ内で `python -m unittest`）。
 
 ### epoch数は480が論文相当（100や300ではない）
 
@@ -355,28 +371,50 @@ ep 90: loss 11.0904 gn 0.0002 ← 吸収状態。ep94 で abort
 | 項目 | 公式 | 本プロジェクト | 状態 |
 |---|---|---|---|
 | `out_dim` | 65536 | 8192 → **65536** | 0025で是正 |
-| `clip_grad` | 3.0 | 無し → **3.0** | 0025で是正 |
+| `clip_grad` | 3.0 | 無し → **3.0**(0025) → **0.3**(0026) | ◆ **論文は言及なし**（コード固有の軸） |
 | `momentum_teacher` | 0.996 → cosine 1.0 | 0.9995固定 → **0.996→1.0** | 0025で是正 |
 | `drop_path_rate` | 0.1 | 0 → **0.1** | 0025で是正 |
-| `teacher_temp` | **0.04固定**(`warmup_teacher_temp_epochs=0`) | 0.04固定 | ✅ 元から一致 |
-| lr / warmup / min_lr / wd / optimizer / batch / local_crops / freeze_last_layer / norm_last_layer / use_bn_in_head / student_temp | — | — | ✅ 一致 |
+| `teacher_temp` | **0.04固定**(`warmup_teacher_temp_epochs=0`) | 0.04固定 | ◆ **論文本文とは食い違う**（下記） |
+| `local_crops_number` | 8 | 8 | ◆ **論文 Appendix E は 6**（下記） |
+| lr / warmup / min_lr / wd / optimizer / batch / freeze_last_layer / norm_last_layer / use_bn_in_head / student_temp | — | — | ✅ 一致 |
 | `use_fp16` | True (fp16+GradScaler) | bf16 autocast | ✅ 実質同等以上 |
 | `global_crops_scale` / `local_crops_scale` | (0.4,1.0) / (0.05,0.4) | (0.2,1.0) / (0.05,0.2) | ⚠️ **意図的な逸脱**（下記） |
 | lr/wdスケジュール粒度 | iteration | epoch | ⚠️ schedulerが全手法共通のため据え置き |
 
-**認識の訂正2点（重要）**
+**認識の訂正（重要）**
 
-- **teacher温度 0.04固定は論文からの逸脱ではなく、公式のデフォルトそのもの。**
-  公式は `teacher_temp=0.04, warmup_teacher_temp_epochs=0`。0.04→0.07 warmup は
-  README の ViT-S/16 300ep "boosted" レシピ側のオプションで、ViT-B/16 の設定ではない。
-  公式ヘルプにも「0.07 を超えると多くの実験で不安定。既定の 0.04 から始めることを推奨」
-  とある。**0024でやったのは論文準拠ではなく論文からの逸脱だった。**
+- **teacher温度: 論文本文と公式コードが食い違っている**（2026-09-04 に論文本体で再確認し、
+  それまでの記述を訂正）。論文 §3.2 Implementation details は
+  「The temperature τs is set to 0.1 while we use a **linear warm-up for τt from 0.04 to
+  0.07 during the first 30 epochs**.」と明記しており、アーキテクチャ別の但し書きは無い。
+  一方リリースされたコードの既定は `teacher_temp=0.04, warmup_teacher_temp_epochs=0`
+  ＝ **0.04固定**で、公式ヘルプも「0.07 を超えると多くの実験で不安定。既定の 0.04 から
+  始めることを推奨」としている。本プロジェクト(0017/0025/0026)は 0.04固定＝**コード側**。
+  **したがって「0024 は論文準拠ではなく逸脱だった」という以前の記述は誤り。**
+  正しくは **0024 は論文本文には忠実で、公式コード既定から逸脱していた**。
+  0024 の崩壊は「論文が書いている設定がこのデータでは成立しない」証拠として読むべきもので、
+  0025/0026 で得た「論文から外したから伸びた」という結論と同じ向きを指している。
+  ⚠️ 論文に書くときは「論文準拠」と一語で済ませず、**論文本文準拠かコード既定準拠かを
+  明示**すること。この2つは teacher温度・local crops数・clip_grad の3点で食い違う。
 - **momentum 0.9995 は batch 256 向けの値。** 公式ヘルプの原文は
   「小さいバッチではより高い値を推奨。例えば batch 256 では 0.9995」。
   本プロジェクトは global batch 1024 なので**既定の 0.996 が論文設定**にあたる。
   0023 が loss 1.72 まで順調に下がったことも 0.996 が悪者でなかった裏づけ。
 - **「out_dim が小さい方が崩壊しにくい」も誤り**（コード内コメントを修正済み）。
   プロトタイプ数が多いほどサンプルを散らせるので一様解に落ちにくい。
+
+**◆ 論文本文と公式コードが食い違う3点**（2026-09-04、論文 arXiv:2104.14294 §3.1-3.2 /
+Appendix C・E と `main_dino.py` を突き合わせて確認）
+
+| 項目 | 論文本文 | 公式コード既定 | 本プロジェクト |
+|---|---|---|---|
+| `teacher_temp` | 0.04 → 0.07 の線形warmup(30 epoch) | **0.04固定** | 0.04固定（コード側） |
+| local crops 数 | **6**（Appendix E） | 8 | 8（コード側） |
+| `clip_grad` | **言及なし** | 3.0 | 3.0(0025) / 0.3(0026) |
+
+`clip_grad` は論文に存在しないパラメータなので、**0026 が動かしたのは論文には無い軸**に
+あたる。crop scale も論文は `(s,1)` / `(0.05,s)` と s を可変パラメータとして書くだけで
+固定値を置いておらず、コード既定の s=0.4 が実質的な基準値になっている。
 
 **意図的な逸脱（論文に明記すること）**: augmentation。公式の crop scale
 (0.4,1.0)/(0.05,0.4) に対し本プロジェクトは (0.2,1.0)/(0.05,0.2)、回転 p=1.0、

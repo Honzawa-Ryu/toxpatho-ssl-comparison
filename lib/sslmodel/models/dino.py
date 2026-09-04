@@ -70,7 +70,7 @@ class DINOLoss(nn.Module):
 
     def __init__(self, out_dim=65536, teacher_temp=0.04, student_temp=0.1,
                  center_momentum=0.9, teacher_temp_end=None,
-                 teacher_temp_warmup_epochs=30):
+                 teacher_temp_warmup_epochs=30, fp32=False):
         """teacher_temp_end=None なら teacher_temp 固定(0017の運用、既定)。
 
         teacher_temp_end を指定すると論文(Caron et al. 2021)の線形warmup
@@ -88,6 +88,9 @@ class DINOLoss(nn.Module):
         self.teacher_temp_warmup_epochs = teacher_temp_warmup_epochs
         self.teacher_temp_warmup_steps = 0
         self.center_momentum = center_momentum
+        # fp32=True なら損失計算だけ autocast を切る(DINO.fp32_head と対で使う)。
+        # 経緯は DINO._forward_views の該当箇所のコメントを参照。
+        self.fp32 = fp32
         self.register_buffer("center", torch.zeros(1, out_dim))
 
     def set_schedule(self, niter_per_ep: int):
@@ -116,6 +119,15 @@ class DINOLoss(nn.Module):
 
     def forward(self, student_outputs, teacher_outputs):
         """student_outputs / teacher_outputs: list of tensors (one per view)."""
+        # fp32=True のときは autocast を切ったスコープで計算する。中身は
+        # 入れ子を避けるため _compute に分けてある(挙動は fp32=False と同一)。
+        if not self.fp32:
+            return self._compute(student_outputs, teacher_outputs)
+        with torch.amp.autocast(device_type=student_outputs[0].device.type, enabled=False):
+            return self._compute([s.float() for s in student_outputs],
+                                 [t.float() for t in teacher_outputs])
+
+    def _compute(self, student_outputs, teacher_outputs):
         # log_softmax は student ビューごとに1回だけ計算して使い回す。
         # 以前は teacher ビューごとにループ内で計算し直しており、同じテンソルを
         # 2回(= n_global_crops 回)作っていた。log_softmax は autocast下でも fp32 で
@@ -169,7 +181,7 @@ class DINO(nn.Module):
     def __init__(self, backbone_name="vit_base_patch16_224", out_dim=8192,
                  momentum=0.9995, norm_last_layer=True, n_global_crops=2,
                  n_local_crops=0, freeze_last_layer_epochs=1, momentum_end=None,
-                 drop_path_rate=0.0):
+                 drop_path_rate=0.0, fp32_head=False):
         """momentum_end=None なら momentum 固定(0017の運用、既定)。
 
         momentum_end を指定すると論文のcosineスケジュール
@@ -185,6 +197,7 @@ class DINO(nn.Module):
         self.n_global_crops = n_global_crops
         self.n_local_crops = n_local_crops
         self.freeze_last_layer_epochs = freeze_last_layer_epochs
+        self.fp32_head = fp32_head
 
         # stochastic depth は student だけに掛ける(公式 main_dino.py と同じ:
         # student は drop_path_rate=args.drop_path_rate、teacher は既定の0で構築する)。
@@ -252,7 +265,23 @@ class DINO(nn.Module):
                 end += 1
             batch = torch.cat(views[start:end], dim=0)
             feat = backbone(batch)
-            out = head(feat)
+            if self.fp32_head:
+                # backbone は bf16 autocast のまま、ヘッドと(DINOLoss側の)損失だけ
+                # fp32 で回す。公式 main_dino.py の --use_fp16 help が
+                # 「loss が不安定なとき / 大きい ViT を使うときは mixed precision を
+                #  切ることを推奨」としているのに対応する opt-in。
+                # 根拠: DINO の損失は teacher の `t - center` という近い値どうしの差を
+                # 取ってから ÷teacher_temp(0.04) で25倍に増幅するため、仮数部8bitの
+                # bf16 では桁落ちが効く。計算量の大半は backbone なので、ヘッドと損失
+                # だけ fp32 にする限り速度低下は小さい。
+                # 注: timm ViT の末尾は LayerNorm (autocastのfp32ポリシー対象)なので
+                # feat は既に fp32 で来る。効くのはヘッド内の Linear と、DINOLoss 側の
+                # `t - center` の引き算のほう。feat.float() は backbone を差し替えた
+                # ときのための保険で、現状は no-op。
+                with torch.amp.autocast(device_type=feat.device.type, enabled=False):
+                    out = head(feat.float())
+            else:
+                out = head(feat)
             outs.extend(torch.chunk(out, end - start, dim=0))
             start = end
         return outs
