@@ -23,10 +23,17 @@
 
 ## A. いま動いていること
 
-- [ ] **DINO の下流評価と安定化** → **[docs/HANDOFF_dino_next.md](docs/HANDOFF_dino_next.md)**（2026-09-03）
-      事前学習6ランが全て崩壊。主因(weight decay を bias/LayerNorm ゲインに適用)は修正済み。
-      `outputs/0026_20260901_dino_clipgrad03/model_ep85.pt` が初のまともな DINO 表現なので、
-      まずこれを下流評価してから 480 epoch 完走に投資するか判断する。
+- [x] **DINO ep85 の下流評価**（HANDOFFタスク1）→ **完了 2026-09-04, exp 0027 / job 9672**
+      全19チェックポイントを同一2,000パッチで測定。**480 epoch 完走の根拠は出なかった**
+      （η²_slide が ep45 の 0.651 から ep85 の 0.639 までしか動かない）。
+      推移グラフ: https://claude.ai/code/artifact/2eadc29f-373e-4157-847f-6d25e62d2b80
+      詳細は [PROJECT_STATUS.md](PROJECT_STATUS.md)「📊 0026 の表現を epoch 推移で評価」。
+- [ ] **次の一手: 他3手法（Barlow Twins / MAE / SimSiam）を同一2,000パッチで測る**
+      DINO の η²_slide 0.64 が良いのか悪いのかは、対等な比較でしか言えない。既存記録の
+      0.55〜0.87 は ResNet時代の別パッチ集合の値で直接比較できない。重みが旧クラスタ
+      (`wsi-ad`)側にあり現環境に無いので、まず所在確認から。
+- [ ] DINO の安定化ラン（HANDOFFタスク2: A=peak lr半減 / B=ヘッドと損失をfp32）は
+      **優先度を下げてよい**。上記より、崩壊を直しても η²_slide は改善しない見込み。
 
 - [ ] **ViT-L MAE（backbone規模プローブ）**: `experiments/20260713_000001_tggate_vitl16_mae/run_slurm.sh` 準備済み・投入待ち。
       ViT-B MAE(20260710_000001)と同一レシピでencoderのみViT-L/16化（`--model_name ViTL16`→mae_vit_large_patch16, 329.5M）。
@@ -57,6 +64,13 @@
 
 ## C. ★研究テーマ: 試験間差（バッチ）除去の表現学習
 wsi id = 無料のバッチラベル。成功＝η²_slideを偶然(≈0.07)へ下げつつ、形態/生物シグナルは保持。
+
+> **2026-09-04 追記（exp 0027）: 中心仮説「バッチは色ではなく構造由来」を、単一手法の
+> 学習軌跡から直接裏づけた。** DINO は色不変性を ep5 の η²_color 0.674 から ep80 の 0.173 まで
+> 獲得し続けるのに、η²_slide は ep45 以降 0.65 前後で平坦。さらに `within_slide_cohesion` と
+> `AMI(clust,slide)` は学習とともに**増加**する（クラスタ構造がスライドIDに寄っていく）。
+> → **SSLの学習を続けるだけではバッチ依存は落ちない**ことが確定したので、C2〜C4 の
+> 明示的な介入（染色aug / クロススライド正例 / ドメイン敵対 / 事後補正）の優先度が上がった。
 
 ### C1. データ / 前処理
 - [ ] 染色正規化（Macenko / Vahadane） … ベースライン。色は主因でないので単独効果は限定的の見込み
