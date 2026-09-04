@@ -1,0 +1,30 @@
+# ============================================================
+# Experiment Configuration
+# ============================================================
+# 0026(clip_grad 0.3)の崩壊前スナップショットを ep20 / ep50 / ep85 で並べ、
+# 「ep85 の表現は他手法と比較する価値があるか」を 480 epoch の完走に日数を
+# 積む前に判定する（docs/HANDOFF_dino_next.md タスク1）。
+#
+# 他3手法(Barlow Twins / MAE / SimSiam)の重みは旧クラスタ側にあり
+# この環境に無いため、まずは DINO 単独の epoch 推移比較。
+# ============================================================
+
+seed: 42  # パッチ選択はRNGを使わない。k-means等の乱数は lib/analysis/common.SEED 側。
+
+# --- 手法 -> チェックポイント対応表（PROJECT_ROOT からの相対パス）---
+methods_config: scripts/analysis/methods_paper.yaml
+
+# --- パッチ集合 ---
+# 学習と同じ WSI 単位 fold 分割の val 側だけを使う（事前学習で重みを更新して
+# いない WSI = 200枚）。0026 は fold 引数を渡していないので、既定の
+# fold 0 / 5分割が学習時の設定にあたる。データ位置は DATASET_DIR に従う。
+per_slide: 10   # 1スライドあたり枚数。200 WSI x 10 = 2000枚
+fold_idx: 0
+num_folds: 5
+
+# --- 埋め込み ---
+batch_size: 256
+
+# --- 比較 ---
+kmeans_k: 10
+rbf_cka: false  # true にすると RBF カーネル版 CKA も出す（計算量が増える）
