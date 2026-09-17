@@ -4,6 +4,17 @@
 > [PROJECT_STATUS.md](../PROJECT_STATUS.md)「🦕 DINO崩壊調査」を参照。
 > 崩壊史のグラフ: https://claude.ai/code/artifact/f4a6e1f1-5b83-4660-a212-40562d82e363
 
+> ## 追記 2026-09-17（セッション11）— このメモの進捗
+>
+> | タスク | 状態 |
+> |---|---|
+> | 1. ep85 の評価 | **半分だけ完了。** exp 0027 で CKA / η² の **幾何評価**は済んだ（ep45→ep85 で η²_slide は 0.651→0.639 しか動かない）。ただし**所見ラベルを使った下流評価はまだ**。→ `toxpatho-uni/scripts/{extract_dino_epochs.pbs, eval_dino_epochs.sh}` を実装済み・未実行 |
+> | 2-A. peak lr 半減 | **`experiments/0028_20260917_dino_lr_half/` として実装済み・未投入。** 0026 の実測（loss は ep75-88 で床に張り付いたまま grad_norm が 1.0→6.0、lr は 480 epoch cosine のせいで ep89 でも peak の 93.5%）から第一候補と判断 |
+> | 2-B. fp32 head | **保留。** `center` は fp32 バッファなので「`t - center` の桁落ち」は成立せず、効くのは `t` の bf16 丸め（logit 上 0.01〜0.1）。ゼロ平均のノイズは 30 epoch の単調ランプを説明しない。A が外れたら投入 |
+> | ブロッカー（memmap vs .tar） | **解消済み**（commit `577bd02`, セッション10） |
+>
+> 経緯は [PROJECT_STATUS.md](../PROJECT_STATUS.md)「🎯 exp 0028」「🔬 所見ラベルによる epoch 別下流評価」。
+
 ## 3行まとめ
 
 - DINO ViT-B/16 の事前学習は 6ラン中 6ランとも崩壊した（損失が `ln(out_dim)` に張り付き勾配が厳密にゼロになる吸収状態）。

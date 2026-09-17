@@ -1,6 +1,6 @@
 # wsi-ad TODO / ロードマップ
 
-最終更新: 2026-09-03
+最終更新: 2026-09-17
 関連: [Goal.yaml](Goal.yaml) ・ [PROJECT_STATUS.md](PROJECT_STATUS.md) ・ [related_work.md](related_work.md)（先行研究サマリ）
 
 ---
@@ -23,17 +23,43 @@
 
 ## A. いま動いていること
 
-- [x] **DINO ep85 の下流評価**（HANDOFFタスク1）→ **完了 2026-09-04, exp 0027 / job 9672**
+- [x] **DINO ep85 の表現評価（幾何）**（HANDOFFタスク1）→ **完了 2026-09-04, exp 0027 / job 9672**
       全19チェックポイントを同一2,000パッチで測定。**480 epoch 完走の根拠は出なかった**
       （η²_slide が ep45 の 0.651 から ep85 の 0.639 までしか動かない）。
       推移グラフ: https://claude.ai/code/artifact/2eadc29f-373e-4157-847f-6d25e62d2b80
       詳細は [PROJECT_STATUS.md](PROJECT_STATUS.md)「📊 0026 の表現を epoch 推移で評価」。
+      ⚠️ **項目名を訂正した（2026-09-17）。** これは CKA / η² / k-means = **ラベル不要の
+      幾何評価**であり、下流タスク評価ではない。0027 自身が「下流タスク性能が epoch と
+      ともに伸び続ける可能性は否定できない」と断っている。
+- [ ] **所見ラベルによる epoch 別下流評価**（実装済み・未実行, 2026-09-17）
+      「現状の DINO が UNI などと比べてどのレベルか」はまだ一度も測っていない。
+      これが **exp 0028（案1: lr のみ）と案2（lr + cosine 周期短縮）の切り分け**になる:
+      ep45→ep85 が横ばいなら epoch 予算は買えていない＝案2へ、単調上昇なら 480 維持。
+      - `toxpatho-uni/scripts/extract_dino_epochs.pbs` — ep20/45/65/85 を1ジョブで特徴抽出。
+        ⚠️ 1.1TB のパッチ集合が Miyabi にしか無いので**ここだけ Miyabi（約2ノード時間）**。
+        判定対象の 0028（約384ノード時間）の 0.5% なので引き合うと判断。**qsub は承認後**
+      - `toxpatho-uni/scripts/eval_dino_epochs.sh` — スコア化→所見別 AUROC。**CPU のみ**（andre01）
+      - スコアは対照群からの Mahalanobis 距離で学習を伴わないため、下記 ABMIL の
+        val リーク問題を踏まない
+- [ ] **exp 0028: peak lr 半減**（実装済み・未投入, 2026-09-17）
+      `experiments/0028_20260917_dino_lr_half/run_slurm.sh`。0026 からの変更は
+      `--lr 5e-4 → 2.5e-4`（実効 2e-3 → 1e-3）の1点のみ。根拠は 0026 が
+      「loss は ep75-88 で床に張り付いたまま grad_norm が 1.0→6.0 へ単調増大し、
+      lr 高原（480 epoch cosine で ep89 でも peak の 93.5%）で臨界を越えた」こと。
+      clip_grad 0.3 は公式推奨レンジの下限で下げ代が無く、AdamW の更新量は勾配の定数倍に
+      不変なので**残るつまみは lr だけ**。詳細は PROJECT_STATUS.md「🎯 exp 0028」
 - [ ] **次の一手: 他3手法（Barlow Twins / MAE / SimSiam）を同一2,000パッチで測る**
       DINO の η²_slide 0.64 が良いのか悪いのかは、対等な比較でしか言えない。既存記録の
       0.55〜0.87 は ResNet時代の別パッチ集合の値で直接比較できない。重みが旧クラスタ
       (`wsi-ad`)側にあり現環境に無いので、まず所在確認から。
-- [ ] DINO の安定化ラン（HANDOFFタスク2: A=peak lr半減 / B=ヘッドと損失をfp32）は
-      **優先度を下げてよい**。上記より、崩壊を直しても η²_slide は改善しない見込み。
+- [ ] **B（`--dino_fp32_head`）は別軸の対抗馬として保留**（実装済み・未投入）。
+      0026 の症状（30 epoch かけた grad_norm の単調増大）はゼロ平均の丸めノイズでは
+      説明できず、`center` は fp32 バッファなので「`t - center` の桁落ち」も成立しない。
+      効くのは `t` の bf16 丸め（logit 上 0.01〜0.1、確率で ±10% 程度、しかも detach 済み）。
+      ⚠️ 精度を上げるのは**論文・公式既定から遠ざかる**方向（公式は fp16+GradScaler、
+      論文本文に精度の記述なし）。「論文に近づける」と書かないこと。A が外れたら投入する。
+- [ ] なお **崩壊を直しても η²_slide は改善しない見込み**（exp 0027）。DINO の安定化は
+      「4手法比較に使える重みを得る」ための作業で、C章のバッチ問題への回答にはならない。
 
 - [ ] **ViT-L MAE（backbone規模プローブ）**: `experiments/20260713_000001_tggate_vitl16_mae/run_slurm.sh` 準備済み・投入待ち。
       ViT-B MAE(20260710_000001)と同一レシピでencoderのみViT-L/16化（`--model_name ViTL16`→mae_vit_large_patch16, 329.5M）。

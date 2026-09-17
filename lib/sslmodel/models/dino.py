@@ -270,14 +270,23 @@ class DINO(nn.Module):
                 # fp32 で回す。公式 main_dino.py の --use_fp16 help が
                 # 「loss が不安定なとき / 大きい ViT を使うときは mixed precision を
                 #  切ることを推奨」としているのに対応する opt-in。
-                # 根拠: DINO の損失は teacher の `t - center` という近い値どうしの差を
-                # 取ってから ÷teacher_temp(0.04) で25倍に増幅するため、仮数部8bitの
-                # bf16 では桁落ちが効く。計算量の大半は backbone なので、ヘッドと損失
-                # だけ fp32 にする限り速度低下は小さい。
+                # 根拠と、その効果の実寸(2026-09-17 に見直した): `center` は
+                # DINOLoss 側で fp32 バッファとして持たれているので `t - center` の
+                # **引き算自体は fp32** で行われる。つまり古典的な桁落ちではなく、
+                # その手前で `t` が bf16 に丸められる誤差が効く。norm_last_layer=True
+                # かつ入力は L2 正規化なので `t` は実質コサイン(|t| <= 1)で、bf16 の
+                # 丸めは |t|~0.1 で ~5e-4 / |t|~1 で ~4e-3。これが ÷teacher_temp(0.04)
+                # で25倍されて logit 上 0.01〜0.1 になる(teacher softmax の確率にして
+                # 数%〜10%程度、しかも detach 済みなので勾配経路には乗らない)。
+                # ゼロ平均のノイズなので「勾配ノルムが数十epochかけて単調増大する」
+                # 類の不安定は説明しない(0026 ep89 の崩壊がまさにそれ)。lr 側の
+                # 対処(exp 0028)とは別軸の対抗馬として扱うこと。
+                # 計算量の大半は backbone なので、ヘッドと損失だけ fp32 にする限り
+                # 速度低下は小さい。
                 # 注: timm ViT の末尾は LayerNorm (autocastのfp32ポリシー対象)なので
-                # feat は既に fp32 で来る。効くのはヘッド内の Linear と、DINOLoss 側の
-                # `t - center` の引き算のほう。feat.float() は backbone を差し替えた
-                # ときのための保険で、現状は no-op。
+                # feat は既に fp32 で来る。実際に変わるのは**ヘッド内の Linear**
+                # (bf16 -> fp32)で、その結果 `t` が fp32 のまま DINOLoss に渡る。
+                # feat.float() は backbone を差し替えたときのための保険で、現状は no-op。
                 with torch.amp.autocast(device_type=feat.device.type, enabled=False):
                     out = head(feat.float())
             else:
