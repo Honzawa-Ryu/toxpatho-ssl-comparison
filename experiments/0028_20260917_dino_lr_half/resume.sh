@@ -22,7 +22,7 @@ OUT="${PROJECT_ROOT}/outputs/${EXP_NAME}"
 LOG_DIR="${PROJECT_ROOT}/logs/${EXP_NAME}"
 SCRIPT="${PROJECT_ROOT}/experiments/${EXP_NAME}/run_slurm.sh"
 NUM_EPOCH=480
-MIN_PER_EPOCH=6.9      # 実測(job 3382307: 156 epoch / 18.0h)
+MIN_PER_EPOCH=6.9      # 実測(job 3382307 完走: 419 epoch / 47.8h = 6.84分/epoch)
 SUBMIT=0
 [ "${1:-}" = "--submit" ] && SUBMIT=1
 
