@@ -15,7 +15,7 @@
 
 最終更新: 2026-09-19（セッション12: **exp 0028 が walltime で ep419/480 に到達して終了**。
 崩壊は起きず、最終アニールで train_loss 1.5629 → 1.1927、eff_rank 440 → 540 まで伸びた。
-resume の点検6項目は全通過で、残り 61 epoch を投入できる状態。**投入はユーザーの確認待ち**）
+resume の点検6項目が全通過したので、残り 61 epoch を **job 3398346 として投入した**）
 
 > **崩壊史のグラフ（全6ラン）: https://claude.ai/code/artifact/f4a6e1f1-5b83-4660-a212-40562d82e363**
 >
@@ -29,7 +29,7 @@ resume の点検6項目は全通過で、残り 61 epoch を投入できる状�
 
 ---
 
-## 🎯 exp 0028: peak lr 半減（2026-09-17, セッション11, job 3382307）— 1本目終了 (ep419/480)
+## 🎯 exp 0028: peak lr 半減（セッション11-12, job 3382307 → 3398346）— 2本目実行中
 
 `experiments/0028_20260917_dino_lr_half/run_slurm.sh`。**0026 からの変更は
 `--lr 5e-4 → 2.5e-4`（実効 peak lr 2e-3 → 1e-3）の1点のみ**で、非コメント行の差分は
@@ -152,7 +152,29 @@ bash experiments/0028_20260917_dino_lr_half/resume.sh --submit
 コストは 4ノード × 約7h = **約28ノード時間**。ディスクは 0028 だけで既に 70GB
 （`outputs/` 全体 145GB）、`--save_interval 5` なので resume 分で +12本 ≈ 10GB 増える。
 
-**投入していない。** CLAUDE.md の通り、学習ジョブでも `qsub` は確認を取ってから。
+### 🚀 2本目を投入した（2026-09-19, **job 3398346.opbs**）
+
+ユーザー確認のうえ `resume.sh --submit` を実行。routing queue `regular-g` → 実行キュー
+`small-g`（4ノード / walltime 10h / 予約トークン 40.0）。投入直後は QUEUED。
+
+起動したらまず次の3行を確認すること:
+
+```bash
+# 1. state.pt から再開できたか（fresh start になっていないか）
+grep -a 'Resumed from state.pt' logs/0028_20260917_dino_lr_half/3398346.opbs.OU
+#    期待: Resumed from state.pt (epoch 418) -> continue at epoch 419/480
+
+# 2. lr の掛け直しが 1本目と同じか（0.002 なら --lr 直し忘れ）
+grep -a 'lr scaled by world_size' logs/0028_20260917_dino_lr_half/3398346.opbs.OU
+
+# 3. 以後の監視
+grep -a 'Epoch: ' logs/0028_20260917_dino_lr_half/3398346.opbs.OU | uniq | tail -20
+```
+
+見るべき点は **ep419 の再開直後に train_loss が 1.19 付近から続くか**。ここが跳ねるなら
+optimizer/scheduler の復元に問題がある。残り 61 epoch で lr は 5.5e-5 → 2e-6 まで落ちるので、
+`grad_norm` のランプ（現在 4.13）はここで頭打ちになるはず。ep480 到達時に `model_ssl.pt` が
+書かれ、以後 `--resume` は「training complete」で即終了するようになる。
 
 ### 経過（2026-09-18 14:20 時点, ep161 / 480）— 崩壊せず、判定基準は満たしている
 
