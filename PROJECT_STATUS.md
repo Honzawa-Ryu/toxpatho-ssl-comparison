@@ -20,6 +20,10 @@ epoch 別下流評価**のスクリプトを実装。どちらも未実行。セ
 > **崩壊史のグラフ（全6ラン）: https://claude.ai/code/artifact/f4a6e1f1-5b83-4660-a212-40562d82e363**
 >
 > **0026 の epoch 推移（exp 0027 の結果）: https://claude.ai/code/artifact/2eadc29f-373e-4157-847f-6d25e62d2b80**
+>
+> **0025 / 0026 / 0028 の loss・grad_norm・eff_rank 比較（2026-09-19, ep383 時点）:
+> https://claude.ai/artifact/E4CyXVWumi9dnaP8yJA4Ha**
+> 再生成は `scripts/analysis/plot_training_curves.py`（学習ログのパースのみ。計算ノード不要）。
 
 > **やること・研究方針の一覧は [TODO.md](TODO.md) を参照**（試験間差除去テーマC章を含む）。
 
