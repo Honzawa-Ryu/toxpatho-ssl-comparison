@@ -261,9 +261,27 @@ torch.distributed.run OK
 `resume.sh` の点検は**項目7を含めて全通過**し、`qsub -l walltime=10:00:00` で投入した。
 routing queue `regular-g` → 実行キュー `small-g`（4ノード / 予約トークン 40.0）。
 
-起動後の確認は下の「2本目を投入した」節と同じ3行（ジョブIDを 3429521 に読み替える）。
-**今回は特に1行目が重要**: `Resumed from state.pt (epoch 418) -> continue at epoch 419/480`
-が出れば、venv 復元後も optimizer / scheduler ごと ep419 から継続できている。
+#### ✅ 起動確認（2026-09-23 15:23）— resume は成功している
+
+```
+[20260923-151710] --ddp_linear_scale_lr: lr scaled by world_size=4 -> 0.001   (1本目と同じ。0.002 なら直し忘れ)
+[20260923-151720] Resumed from state.pt (epoch 418) -> continue at epoch 419/480   (4ランクすべて)
+[20260923-152310] Epoch: 420, train_loss: 1.1864, lr: 5.40e-05, grad_norm: 4.0004, ln_gain: 1.2601
+```
+
+`ModuleNotFoundError` は出ていない（前回はここで12分後に死んだ）。
+**状態の復元は完全**で、1本目 ep419 の各値から滑らかに続いている:
+
+| | 1本目 ep419 | 3本目 ep420 |
+|---|---|---|
+| train_loss | 1.1927 | **1.1864** |
+| lr | 5.54e-05 | 5.40e-05 |
+| grad_norm | 4.1278 | 4.0004 |
+| ln_gain | 1.2584 | 1.2601 |
+
+`traceback` / `abort` / 崩壊検知のヒットは無し（`collapse` の12ヒットは
+`Execution Arguments` が `collapse_early_stop` 等を4ランク分エコーしているだけ）。
+ep420 の所要は約5.8分なので、残り60 epoch は **約6時間**、walltime 10h に十分収まる。
 
 ### 🚀 2本目を投入した（2026-09-19, **job 3398346.opbs**）— 即死したので無効
 
