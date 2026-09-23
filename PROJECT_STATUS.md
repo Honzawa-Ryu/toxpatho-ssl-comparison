@@ -15,14 +15,16 @@
 
 最終更新: 2026-09-23（セッション13: **resume した job 3398346 が起動12分で全4ノード即死していた**。
 原因は学習と無関係で、`uv run` がログインノードで `.venv` を作り直していたこと。
-`state.pt`（ep419）は無傷で、venv を直せばそのまま再開できる。復旧手順と再発防止を実装した）
+venv を復元して **job 3429521 として再投入した**。復旧手順と再発防止も実装済み）
 
 > ## 🚨 いま最初に読むこと（2026-09-23）
 >
-> **exp 0028 は ep419/480 で止まったまま。resume は未完了。**
-> job 3398346 は `.venv` が壊れていたため 1 epoch も進んでいない。
-> 再投入の前に **`bash tools/rebuild_venv.sh --apply`** で venv を作り直すこと。
-> 経緯は下の「◆ job 3398346 の即死」と `env/CONTAINER.md`「⚠️ `uv run` が `.venv` を作り直す事故」。
+> **exp 0028 の3本目 = job 3429521 を投入済み（残り 61 epoch / walltime 10h）。**
+> 1本目 3382307 が ep419 まで進み、2本目 3398346 は `.venv` 破壊で 1 epoch も進まず即死した。
+> venv は `tools/rebuild_venv.sh --apply` で復元済み（torch は ep1〜419 と同一の
+> コンテナ版 2.13.0a0、timm 1.0.28）。
+> **ログインノードでプロジェクト直下の `uv run` / `uv sync` を叩かないこと**（`--no-project` を付ける）。
+> 経緯は下の「💥 job 3398346 の即死」と `env/CONTAINER.md`「⚠️ `uv run` が `.venv` を作り直す事故」。
 
 > **崩壊史のグラフ（全6ラン）: https://claude.ai/code/artifact/f4a6e1f1-5b83-4660-a212-40562d82e363**
 >
@@ -236,7 +238,34 @@ NG: .venv の土台がコンテナの python ではない。uv に作り直さ�
 
 **この検査は他の実験の投入スクリプトにも入れること。** 4ノード確保してから落ちるのは高い。
 
-### 🚀 2本目を投入した（2026-09-19, **job 3398346.opbs**）
+### ✅ venv を復元して3本目を投入した（2026-09-23, **job 3429521.opbs**）
+
+`bash tools/rebuild_venv.sh --apply` を実行。旧 venv は `.venv.bak.20260923_150300`（1.1GB）へ退避。
+本番と同じ経路（コンテナ内で `.venv` を activate）での検証が全通過した:
+
+```
+torch   2.13.0a0+8145d630e8.nv26.06  /usr/local/lib/python3.12/dist-packages/torch
+timm    1.0.28
+h5py    3.16.0 / numpy 2.3.5 / wandb 0.27.2
+lib.* の import OK
+torch.distributed.run OK
+```
+
+`timm` / `wandb` / `h5py` / `numpy` の4つは **job 3382307 の requirements.txt と版まで一致**。
+`pyvenv.cfg` も `home = /usr/bin` / `version_info = 3.12.3` /
+`include-system-site-packages = true` と、壊れる前の構造に戻った。
+
+新しい `.venv` は **67MB**（壊れていた方は 1.1GB）。ほとんどのパッケージが
+コンテナ側から供給される設計どおりの姿で、venv 固有は25個だけという差分解析とも整合する。
+
+`resume.sh` の点検は**項目7を含めて全通過**し、`qsub -l walltime=10:00:00` で投入した。
+routing queue `regular-g` → 実行キュー `small-g`（4ノード / 予約トークン 40.0）。
+
+起動後の確認は下の「2本目を投入した」節と同じ3行（ジョブIDを 3429521 に読み替える）。
+**今回は特に1行目が重要**: `Resumed from state.pt (epoch 418) -> continue at epoch 419/480`
+が出れば、venv 復元後も optimizer / scheduler ごと ep419 から継続できている。
+
+### 🚀 2本目を投入した（2026-09-19, **job 3398346.opbs**）— 即死したので無効
 
 ユーザー確認のうえ `resume.sh --submit` を実行。routing queue `regular-g` → 実行キュー
 `small-g`（4ノード / walltime 10h / 予約トークン 40.0）。投入直後は QUEUED。
