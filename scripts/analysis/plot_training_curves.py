@@ -2,13 +2,19 @@
 
 学習ログのパースだけなので GPU も計算ノードも要らない。ログインノードで動く。
 
-    uv run --with matplotlib python scripts/analysis/plot_training_curves.py \
+    uv run --no-project --with matplotlib python scripts/analysis/plot_training_curves.py \
         --exp 0025_20260831_dino_paper_faithful \
         --exp 0026_20260901_dino_clipgrad03 \
         --exp 0028_20260917_dino_lr_half \
         --out outputs/_analysis/curves_0025_0026_0028.png
 
 --json を付けると素の系列も吐く(プロット環境が無いとき用)。
+
+⚠️ `--no-project` を必ず付けること。これを外すと uv がプロジェクトの .venv を
+「requires-python 3.12 に合わない壊れた環境」と判断して黙って作り直し、学習ジョブ用の
+venv(コンテナ python 3.12.3 土台 + system-site-packages 経由の torch + timm)が
+消える。2026-09-19 にこれが起きて job 3398346 が全4ノード即死した。
+直し方は tools/rebuild_venv.sh、経緯は env/CONTAINER.md を参照。
 """
 
 from __future__ import annotations

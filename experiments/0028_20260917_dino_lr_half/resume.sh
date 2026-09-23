@@ -77,6 +77,24 @@ case "${LAST_LINE}" in
 esac
 echo "ok : 吸収状態ではない"
 
+# 7. .venv が学習ジョブを動かせる状態か
+#    ログインノードで `uv run` / `uv sync` を叩くと uv が .venv を作り直してしまい、
+#    torch(コンテナ側)への道筋と timm が消える。2026-09-19 にこれで job 3398346 が
+#    全4ノード即死した(ModuleNotFoundError: No module named 'torch')。
+#    4ノードを確保してから落ちるのは高くつくので、投入前にここで止める。
+VENV_CFG="${PROJECT_ROOT}/.venv/pyvenv.cfg"
+VENV_SP="${PROJECT_ROOT}/.venv/lib/python3.12/site-packages"
+VENV_NG="uv に作り直された疑い。bash tools/rebuild_venv.sh --apply で直すこと"
+[ -f "${VENV_CFG}" ] || fail ".venv が無い。bash tools/rebuild_venv.sh --apply で作り直すこと"
+grep -q "^home = /usr/bin" "${VENV_CFG}" || {
+  grep -E "^(home|include-system-site-packages) = " "${VENV_CFG}" >&2
+  fail ".venv の土台がコンテナの python ではない。${VENV_NG}"
+}
+grep -q "^include-system-site-packages = true" "${VENV_CFG}" \
+  || fail ".venv が system-site-packages を見ない=コンテナ側 torch が見えない。${VENV_NG}"
+[ -d "${VENV_SP}/timm" ] || fail ".venv に timm が無い。${VENV_NG}"
+echo "ok : .venv はコンテナ python 土台 + system-site-packages + timm あり"
+
 QSUB_CMD="qsub -l walltime=${WALLTIME} ${SCRIPT}"
 
 echo

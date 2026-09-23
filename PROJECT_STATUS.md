@@ -13,9 +13,16 @@
 > 実行は向こう。**コミットに「実装済み・未実行」が含まれるのは想定どおり。**
 > 詳細は [CLAUDE.md](CLAUDE.md)。
 
-最終更新: 2026-09-19（セッション12: **exp 0028 が walltime で ep419/480 に到達して終了**。
-崩壊は起きず、最終アニールで train_loss 1.5629 → 1.1927、eff_rank 440 → 540 まで伸びた。
-resume の点検6項目が全通過したので、残り 61 epoch を **job 3398346 として投入した**）
+最終更新: 2026-09-23（セッション13: **resume した job 3398346 が起動12分で全4ノード即死していた**。
+原因は学習と無関係で、`uv run` がログインノードで `.venv` を作り直していたこと。
+`state.pt`（ep419）は無傷で、venv を直せばそのまま再開できる。復旧手順と再発防止を実装した）
+
+> ## 🚨 いま最初に読むこと（2026-09-23）
+>
+> **exp 0028 は ep419/480 で止まったまま。resume は未完了。**
+> job 3398346 は `.venv` が壊れていたため 1 epoch も進んでいない。
+> 再投入の前に **`bash tools/rebuild_venv.sh --apply`** で venv を作り直すこと。
+> 経緯は下の「◆ job 3398346 の即死」と `env/CONTAINER.md`「⚠️ `uv run` が `.venv` を作り直す事故」。
 
 > **崩壊史のグラフ（全6ラン）: https://claude.ai/code/artifact/f4a6e1f1-5b83-4660-a212-40562d82e363**
 >
@@ -29,7 +36,7 @@ resume の点検6項目が全通過したので、残り 61 epoch を **job 3398
 
 ---
 
-## 🎯 exp 0028: peak lr 半減（セッション11-12, job 3382307 → 3398346）— 2本目実行中
+## 🎯 exp 0028: peak lr 半減（セッション11-13, job 3382307 → 3398346）— ep419/480 で停止中
 
 `experiments/0028_20260917_dino_lr_half/run_slurm.sh`。**0026 からの変更は
 `--lr 5e-4 → 2.5e-4`（実効 peak lr 2e-3 → 1e-3）の1点のみ**で、非コメント行の差分は
@@ -151,6 +158,83 @@ bash experiments/0028_20260917_dino_lr_half/resume.sh --submit
 
 コストは 4ノード × 約7h = **約28ノード時間**。ディスクは 0028 だけで既に 70GB
 （`outputs/` 全体 145GB）、`--save_interval 5` なので resume 分で +12本 ≈ 10GB 増える。
+
+### 💥 job 3398346 の即死（2026-09-19 23:50）— 学習ではなく環境の事故
+
+**1 epoch も進んでいない。** 23:38 起動 → 23:50 に4ノードすべて `exit status 1`。
+`state.pt` は ep419（09/19 19:44）のままで、**失った計算は約0.8ノード時間だけ**。
+
+```
+/work/.../.venv/bin/python: Error while finding module specification for
+'torch.distributed.run' (ModuleNotFoundError: No module named 'torch')
+```
+
+生成スクリプト（`_multinode_incontainer.sh` / `_multinode_launch.sh` / `command.sh`）は
+**1本目とジョブID・ホスト名以外が完全に同一**（`diff` 確認済み）。SIF も同じ。
+つまり**変わったのは `.venv` だけ**である。
+
+| | 1本目 3382307（成功） | 2本目 3398346（失敗） |
+|---|---|---|
+| venv の土台 python | コンテナ `/usr/bin/python3`（**3.12.3**） | uv 管理 standalone CPython **3.12.13** |
+| `include-system-site-packages` | true | **false** |
+| torch | コンテナの `/usr/local/lib/python3.12/dist-packages`（2.13.0a0） | **見えない** |
+| timm / wandb | あり | **無し** |
+
+原因は `uv run`。詳細と再発防止は **`env/CONTAINER.md`「⚠️ `uv run` が `.venv` を
+作り直す事故」** に書いた。要点だけ:
+
+- ログインノードの `/usr/bin/python3` は **3.9.25**、コンテナは **3.12.3**。
+  学習用 venv はコンテナ python 土台なので、**ログインノードからは壊れて見える**。
+- `pyproject.toml` の `requires-python = "==3.12.*"` を満たさないと判断した uv が、
+  **確認なしに `.venv` を作り直した**（`--all-extras` 無しなので timm も消える）。
+- 引き金は `scripts/analysis/plot_training_curves.py` の docstring にあった実行例
+  `uv run --with matplotlib python ...`（`--no-project` 無し）。
+  `.venv/pyvenv.cfg` が **15:36:16**、グラフ `outputs/_analysis/curves_0025_0026_0028.png`
+  が **15:37** に生成されており、時刻が一致する。
+  **グラフを1枚描いただけなので venv を触った自覚は残らない。**
+
+### 🔧 復旧手順（2026-09-23 実装・スクラッチで検証済み、未適用）
+
+```bash
+bash tools/rebuild_venv.sh            # 点検のみ
+bash tools/rebuild_venv.sh --apply    # 既存 .venv を .venv.bak.<日時> へ退避してから作り直す
+```
+
+壊れる前の中身は **job 3382307 自身の wandb 記録**から復元した
+（`wandb/offline-run-20260917_195710-0laflbix/files/requirements.txt`, 350パッケージ）。
+コンテナ側 `pip freeze`（217パッケージ）との差分＝**venv 固有は25個だけ**で、
+base 依存 + `timm` に一致する。torch / torchvision / wandb はコンテナ側から来ていた。
+
+`/tmp` のスクラッチで手順を検証した結果（`.venv` には触れていない）:
+
+```
+torch   2.13.0a0+8145d630e8.nv26.06  /usr/local/lib/python3.12/dist-packages/torch   <- ep1〜419 と同一
+timm    1.0.28                                                                      <- 記録と一致
+h5py    3.16.0 / numpy 2.3.5                                                        <- 記録と一致
+OK: venv に torch なし（コンテナ版を使用）
+```
+
+⚠️ `uv pip install timm`（`--no-deps` 無し）だと **uv が torch 2.14.0 を venv 側に入れて
+コンテナの 2.13.0a0 をシャドウする**ことを実機で確認した。`env/CONTAINER.md` が
+2026-08-29 時点で警告していた事象が実際に起きる。**必ず `--no-deps` を付ける。**
+
+### 🛡️ 再発防止（実装済み）
+
+| 場所 | 内容 |
+|---|---|
+| `experiments/0028_.../resume.sh` | **点検項目7** を追加。`pyvenv.cfg` の `home` / `include-system-site-packages` と `timm` の有無を見て、壊れた venv なら投入前に止める |
+| `scripts/analysis/plot_training_curves.py` | docstring の実行例に **`--no-project`** を追加し、外した場合に何が壊れるかを明記 |
+| `tools/rebuild_venv.sh` | 復旧手順をスクリプト化（退避 → 作り直し → 本番と同じ経路での import 検証まで） |
+| `env/CONTAINER.md` | 事故の機序・根拠・直し方を記録 |
+
+点検項目7 が現に止まることを確認済み:
+
+```
+NG: .venv の土台がコンテナの python ではない。uv に作り直された疑い。
+    bash tools/rebuild_venv.sh --apply で直すこと
+```
+
+**この検査は他の実験の投入スクリプトにも入れること。** 4ノード確保してから落ちるのは高い。
 
 ### 🚀 2本目を投入した（2026-09-19, **job 3398346.opbs**）
 

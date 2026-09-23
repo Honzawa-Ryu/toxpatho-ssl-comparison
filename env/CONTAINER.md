@@ -102,6 +102,86 @@ aarch64/GH200 で torch を pip 導入するのは困難で、NGC の最適化�
 将来 `uv sync --all-extras` が成功すると**意図せず 2.11.0 がコンテナの 2.13.0a0 を
 シャドウする**可能性がある点に注意。
 
+## ⚠️ `uv run` が `.venv` を作り直す事故（2026-09-19 発生）
+
+**ログインノードでプロジェクト直下の `uv run` / `uv sync` を叩いてはいけない。**
+`--no-project`（または `UV_PROJECT_ENVIRONMENT` で別の場所を指す）を必ず付ける。
+
+### 何が起きるか
+
+| | python3 |
+|---|---|
+| ログインノード `/usr/bin/python3` | **3.9.25** |
+| コンテナ `/usr/bin/python3` | **3.12.3** |
+
+学習用 `.venv` は**コンテナの 3.12.3 を土台**に作られている（`pyvenv.cfg` の
+`home = /usr/bin`）。ところがログインノードから同じパスを引くと 3.9 に化けるため、
+`pyproject.toml` の `requires-python = "==3.12.*"` を満たさない**壊れた環境に見える**。
+そこで uv は「使えない」と判断し、**確認なしに `.venv` を作り直す**:
+
+- 土台が uv 管理の standalone CPython（`~/.local/share/uv/python/...`）に変わる
+- `include-system-site-packages = false` になり、**コンテナ側 torch への道筋が切れる**
+- `--all-extras` が付かないので **timm / wandb も入らない**
+
+学習ジョブは `source ${PROJECT_ROOT}/.venv/bin/activate` → `python -m torch.distributed.run`
+という経路（`scripts/slurm_entry.sh`）なので、次の投入で全ノードが即死する:
+
+```
+/work/.../.venv/bin/python: Error while finding module specification for
+'torch.distributed.run' (ModuleNotFoundError: No module named 'torch')
+```
+
+### 実際の事故
+
+`scripts/analysis/plot_training_curves.py` の docstring にあった実行例
+
+```bash
+uv run --with matplotlib python scripts/analysis/plot_training_curves.py ...   # ← --no-project が無い
+```
+
+をログインノードで実行した結果、`.venv/pyvenv.cfg` が **15:36:16** に書き換わり、
+グラフ `outputs/_analysis/curves_0025_0026_0028.png` が **15:37** に生成された。
+その 8 時間後に投入した exp 0028 の resume（**job 3398346**）が、
+4ノードすべて上記エラーで起動12分後に落ちた。**グラフを1枚描いただけなので、
+venv を触った自覚は残らない。** docstring は `--no-project` 付きに修正済み。
+
+### 直し方
+
+```bash
+bash tools/rebuild_venv.sh            # 点検のみ
+bash tools/rebuild_venv.sh --apply    # 退避してから作り直す
+```
+
+やっていること（すべてコンテナ内）:
+
+```bash
+uv venv --python /usr/bin/python3 --system-site-packages .venv   # 土台をコンテナ python に固定
+uv sync --active --inexact                                      # base 依存のみ(torch extra は入れない)
+uv pip install --no-deps 'timm==1.0.28'                         # timm だけ個別。torch を引かせない
+```
+
+`--no-deps` が要るのは、`uv pip install timm` だと **uv が torch 2.14.0 を venv 側に
+入れてしまい**、コンテナの 2.13.0a0 をシャドウするため（実機確認済み）。
+`uv` は `--system-site-packages` 下でも既存 torch を「充足済み」と見なさない。
+
+### 構成の根拠
+
+壊れる前の `.venv` の中身は **job 3382307 自身の wandb 記録**から復元した:
+
+```
+wandb/offline-run-20260917_195710-0laflbix/files/requirements.txt   (350 パッケージ)
+```
+
+これとコンテナ側 `pip freeze`（217 パッケージ）の差分＝**venv 固有は 25 個だけ**で、
+`pyproject.toml` の base 依存 + `timm` に一致する。
+**torch / torchvision / wandb はすべてコンテナ側**から来ていた（上節のとおり）。
+
+### 再発防止
+
+`experiments/0028_20260917_dino_lr_half/resume.sh` の点検項目7 が、投入前に
+`pyvenv.cfg` の `home` / `include-system-site-packages` と `timm` の有無を見て止める。
+4ノード確保してから落ちるのは高くつくので、他の実験の投入スクリプトにも同じ検査を入れること。
+
 ## イメージが消えた/変わった場合の復旧
 
 元が NGC の公開イメージなので、同じタグから作り直せる:
