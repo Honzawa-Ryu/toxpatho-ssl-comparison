@@ -17,6 +17,7 @@ import lib.sslmodel.evaluation as ssl_eval
 from lib.trainer import distributed
 from lib.trainer.context import RunContext
 from lib.trainer.data import prepare_data
+from lib.trainer.clip_logging import write_epoch as write_clip_epoch
 
 
 # train epoch
@@ -27,6 +28,7 @@ def train_epoch(ctx: RunContext, model, data_loader, criterion, optimizer, epoch
     model.train()
     train_batch_loss = []
     grad_norms = []
+    clip_norms = [] if clip_grad > 0 and distributed.is_main_process() else None
     # DINOのteacher momentum/温度スケジュールはstep単位で更新する(論文と同じ粒度)。
     # 通算stepの純関数として計算するのでresume時も正しい値になる。
     niter_per_ep = len(data_loader)
@@ -50,6 +52,8 @@ def train_epoch(ctx: RunContext, model, data_loader, criterion, optimizer, epoch
         if grads:
             per_param_norms = torch._foreach_norm(grads)
             grad_norm = torch.norm(torch.stack(per_param_norms)).item()
+            if clip_norms is not None:
+                clip_norms.append(torch.stack(per_param_norms).detach())
             if clip_grad > 0:
                 # DINO公式(utils.clip_gradients)と同じ「パラメータ毎」のクリップ。
                 # 全体ノルムでの clip_grad_norm_ ではない点に注意。
@@ -59,6 +63,8 @@ def train_epoch(ctx: RunContext, model, data_loader, criterion, optimizer, epoch
                     g_.mul_(torch.clamp(clip_grad / (n_ + 1e-6), max=1.0))
         else:
             grad_norm = 0.0
+            if clip_norms is not None:
+                clip_norms.append(())
         grad_norms.append(grad_norm)
         # DDPラップ後、DINO等のカスタムメソッド(cancel_last_layer_gradients /
         # update_moving_average)は .module 側にしか存在しないため unwrap 経由で呼ぶ
@@ -75,6 +81,11 @@ def train_epoch(ctx: RunContext, model, data_loader, criterion, optimizer, epoch
         # なってしまうため、マルチGPU時は全rank平均に揃える(no-op when world_size==1)。
         loss_value = distributed.all_reduce_mean(loss.detach().clone()).item()
         train_batch_loss.append(loss_value)
+    if clip_norms is not None:
+        try:
+            write_clip_epoch(ctx.dir_name, epoch + 1, clip_grad, clip_norms, grad_norms)
+        except OSError as exc:
+            ctx.logger.logger.warning(f'Clipping telemetry could not be saved: {exc}')
     return model, np.mean(train_batch_loss), np.mean(grad_norms)
 
 def diagnose_gpu_bound(ctx: RunContext, model, criterion, optimizer, batch_size, size=(224,224), n_steps=50):
