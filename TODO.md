@@ -1,6 +1,6 @@
 # wsi-ad TODO / ロードマップ
 
-最終更新: 2026-09-17
+最終更新: 2026-09-30
 関連: [Goal.yaml](Goal.yaml) ・ [PROJECT_STATUS.md](PROJECT_STATUS.md) ・ [related_work.md](related_work.md)（先行研究サマリ）
 
 ---
@@ -64,9 +64,13 @@
       投入スクリプトにも展開する。**これが無かったために job 3398346 が4ノード確保してから
       12分で即死した。** 検査自体はローカルで一瞬。
       経緯は `env/CONTAINER.md`「⚠️ `uv run` が `.venv` を作り直す事故」。
-- [ ] **`.venv.bak.20260923_150300`（1.1GB）を削除する**（2026-09-23）
-      `uv run` に壊された方の venv。0028 が完走して新 venv で問題ないと確認済みなので、
-      中身を見る必要が無ければ `rm -rf` してよい。
+- [x] **`.venv.bak.20260923_150300` を削除する**（2026-09-23 起票 → **2026-09-30 完了**）
+      `uv run` に壊された方の venv。削除前に `pyvenv.cfg` で取り違えが無いことを確認した
+      （消した方は `home = .../uv/python/...` / `include-system-site-packages = false`）。
+      現行 `.venv` は健全（`home = /usr/bin` / `= true` / `timm` あり / `torch` は venv 側に無い）。
+      ⚠️ 併せて PROJECT_STATUS の「新しい `.venv` は 67MB」を訂正した。あれは `du` の
+      ハードリンク計上による見かけの値で、実測は 1.1GB / 287パッケージ。
+      **venv のサイズを健全性の判断に使わないこと。**
 - [ ] **次の一手: 他3手法（Barlow Twins / MAE / SimSiam）を同一2,000パッチで測る**
       DINO の η²_slide 0.64 が良いのか悪いのかは、対等な比較でしか言えない。既存記録の
       0.55〜0.87 は ResNet時代の別パッチ集合の値で直接比較できない。重みが旧クラスタ

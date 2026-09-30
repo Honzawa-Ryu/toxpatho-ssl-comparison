@@ -13,7 +13,22 @@
 > 実行は向こう。**コミットに「実装済み・未実行」が含まれるのは想定どおり。**
 > 詳細は [CLAUDE.md](CLAUDE.md)。
 
-最終更新: 2026-09-24（clip_grad既存ログ集計と追加loggingを実装。詳細は下記）
+最終更新: 2026-09-30（壊れた `.venv.bak` を削除。venv サイズ「67MB」の記述を訂正）
+
+### 2026-09-30: 壊れた `.venv.bak.20260923_150300` を削除した
+
+- `uv run` に作り直された方の venv を `rm -rf` した。削除前に `pyvenv.cfg` で取り違えが
+  無いことを確認している（消した方は `home = .../uv/python/cpython-3.12-...` /
+  `include-system-site-packages = false`、残した方は `home = /usr/bin` / `= true`）。
+- 現行 `.venv` の健全性を確認: `home = /usr/bin` / `version_info = 3.12.3` /
+  `include-system-site-packages = true`、`timm` と `h5py` あり、**`torch` は venv 側に無い**
+  （コンテナの `/usr/local/lib/python3.12/dist-packages` から供給）。site-packages の
+  mtime は全て 09-23 15:03 = 再構築そのもので、あれ以降に誰も触っていない。
+- ⚠️ **venv のサイズを健全性の判断に使わないこと。** 下の「67MB」は `du` の
+  ハードリンク計上による見かけの値だった。詳細は該当箇所の訂正を参照。
+- `resume.sh` の点検（項目7 を含む）は `qsub` を含むため自動モードで実行を止められた。
+  項目7 と同じ3点は上記のとおり手で確認済み。学習ジョブの投入は無し。
+
 
 ### 2026-09-24: clip_gradログ解析（途中成果をGitへ保存）
 
@@ -317,8 +332,15 @@ torch.distributed.run OK
 `pyvenv.cfg` も `home = /usr/bin` / `version_info = 3.12.3` /
 `include-system-site-packages = true` と、壊れる前の構造に戻った。
 
-新しい `.venv` は **67MB**（壊れていた方は 1.1GB）。ほとんどのパッケージが
-コンテナ側から供給される設計どおりの姿で、venv 固有は25個だけという差分解析とも整合する。
+~~新しい `.venv` は **67MB**（壊れていた方は 1.1GB）。~~ → **この数字は `du` の測り方による
+見かけの値だった（2026-09-30 訂正）。** uv は共有キャッシュからハードリンクを張るので、
+`du -sh .venv .venv.bak.*` のように**同時に測ると共有分が先に挙げた方だけに計上される**。
+実測は `.venv` **1.1GB / 287パッケージ**で、`.venv.bak` を消した後も変わらない。
+**「67MB でないから壊れている」と判断しないこと。** 健全性は resume.sh 点検項目7 と同じ
+3点（`pyvenv.cfg` の `home = /usr/bin` / `include-system-site-packages = true` / `timm` の
+存在）と、**`.venv` 側に `torch` が無い**ことで見る。ほとんどのパッケージが
+コンテナ側から供給される設計どおりの姿であること自体は変わらない
+（`torch` は `/usr/local/lib/python3.12/dist-packages`、`wandb` も venv 側には無い）。
 
 `resume.sh` の点検は**項目7を含めて全通過**し、`qsub -l walltime=10:00:00` で投入した。
 routing queue `regular-g` → 実行キュー `small-g`（4ノード / 予約トークン 40.0）。
