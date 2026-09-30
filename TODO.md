@@ -73,9 +73,11 @@
       **venv のサイズを健全性の判断に使わないこと。**
 - [ ] **Barlow Twins ViT-B/16 の事前学習**（2026-09-30 着手）
       方針: 元論文再現を基本に、崩壊検知で停止→修正→新実験番号で再実行（Goal.yaml 方針3）。
-      済: NaN/inf 即停止（`CollapseMonitor.check_loss_finite`）、CPU スモーク。
-      未: 新実験番号の作成（`--collapse_early_stop` 付き）、epoch/ノード数の決定、**qsub は承認後**。
-      `0015_20260806_paper_barlowtwins_vitb16` は未投入のまま残っている。
+      済: NaN/inf 即停止（`CollapseMonitor.check_loss_finite`）、CPU スモーク、
+      **exp 0029 を定義**（`experiments/0029_20260930_bt_vitb16_step_matched/`: 8ノード・bs 2048・**1600 epoch = 論文と同じ約62.5万 step**、
+      `--collapse_early_stop` 付き、preflight.sh 通過済み）。見積り 350〜560 ノード時間・48h 枠で 2 本。
+      未: **qsub（ユーザー承認待ち）**。投入後は初回の損失曲線から BT 用の損失しきい値を決める。
+      `0015_20260806_paper_barlowtwins_vitb16` は未投入のまま残す（旧定義）。
       ⚠️ ViT×BT の先行報告は見つからず、LARS が ViT で安定かは未検証。詳細は PROJECT_STATUS。
 - [ ] **次の一手: 他3手法（Barlow Twins / MAE / SimSiam）を同一2,000パッチで測る**
       DINO の η²_slide 0.64 が良いのか悪いのかは、対等な比較でしか言えない。既存記録の
