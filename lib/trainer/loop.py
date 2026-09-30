@@ -6,6 +6,7 @@
 ガードをここに入れる（REFACTOR_PLAN.md §6-4）。
 
 """
+import os
 import time
 
 import numpy as np
@@ -226,6 +227,27 @@ def train(ctx: RunContext, model, criterion, optimizer, scheduler, early_stoppin
                 "grad_norm": grad_norm,
                 "norm_gain_mean": ln_gain,
             }, step=epoch)
+        # NaN/inf の train_loss は重みが回復不能なので、patience も rank_monitor_interval も
+        # 待たず即停止する。**state.pt 保存・early_stopping() より前**に置くこと:
+        #   - EarlyStopping は `NaN > best` が False になり「改善」側へ入るため、
+        #     NaN の重みを checkpoint.pt(abort時の復元元)へ保存してしまう。
+        #   - state.pt も NaN 重みで上書きされ、--resume しても壊れた状態から再開になる。
+        # train_epoch_loss は all_reduce_mean 済みで全rank同一なので、追加の集合通信なしで
+        # 全rankが同じ判断をする(片rankだけ抜けると他rankがDDPでhangする)。
+        if collapse_monitor is not None and collapse_monitor.check_loss_finite(train_epoch_loss):
+            LOGGER.logger.info(
+                f'Non-finite train_loss at Epoch: {epoch + 1} — aborting to save compute '
+                f'[{collapse_monitor.reason}]'
+            )
+            if not os.path.exists(early_stopping.path):
+                # 有限な val_loss を1度も記録していない(= 復元できる健全な重みが無い)。
+                # NaN 重みを model_ssl.pt として書き出さないよう、例外で止める。
+                raise RuntimeError(
+                    f'train_loss became non-finite at Epoch {epoch + 1} and no healthy '
+                    f'checkpoint exists ({early_stopping.path}); refusing to write NaN weights'
+                )
+            distributed.unwrap(model).load_state_dict(torch.load(early_stopping.path))
+            return model, train_loss, True
         # 崩壊監視(effective_rank等)はrank0のみで実行する。eval_loaderは全rank同一
         # (data.py: split_by_rank=False)なので結果はどのrankで計算しても同じであり、
         # 全rankで重複計算する意味がない（docs/multi_gpu_migration.md §5）。

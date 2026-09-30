@@ -71,6 +71,12 @@
       ⚠️ 併せて PROJECT_STATUS の「新しい `.venv` は 67MB」を訂正した。あれは `du` の
       ハードリンク計上による見かけの値で、実測は 1.1GB / 287パッケージ。
       **venv のサイズを健全性の判断に使わないこと。**
+- [ ] **Barlow Twins ViT-B/16 の事前学習**（2026-09-30 着手）
+      方針: 元論文再現を基本に、崩壊検知で停止→修正→新実験番号で再実行（Goal.yaml 方針3）。
+      済: NaN/inf 即停止（`CollapseMonitor.check_loss_finite`）、CPU スモーク。
+      未: 新実験番号の作成（`--collapse_early_stop` 付き）、epoch/ノード数の決定、**qsub は承認後**。
+      `0015_20260806_paper_barlowtwins_vitb16` は未投入のまま残っている。
+      ⚠️ ViT×BT の先行報告は見つからず、LARS が ViT で安定かは未検証。詳細は PROJECT_STATUS。
 - [ ] **次の一手: 他3手法（Barlow Twins / MAE / SimSiam）を同一2,000パッチで測る**
       DINO の η²_slide 0.64 が良いのか悪いのかは、対等な比較でしか言えない。既存記録の
       0.55〜0.87 は ResNet時代の別パッチ集合の値で直接比較できない。重みが旧クラスタ

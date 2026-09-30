@@ -496,6 +496,26 @@ class CollapseMonitor:
         self.collapsed = False
         self.reason = ''
 
+    def check_loss_finite(self, train_loss):
+        """NaN/inf の train_loss を即崩壊として扱う(patience を待たない)。
+
+        `update()` は NaN を「無効な測定値」として無視する(eff_rank の SVD が
+        発散したとき等に、NaN で patience カウンタがリセットされるのを避けるため)。
+        しかし **train_loss が NaN/inf なのは重みが既に NaN 化している状態**で、
+        以後のstepも全て NaN になり回復しない。Barlow Twins は出力が定数に潰れると
+        `z.std(0) -> 0` で損失が NaN になるので、`update()` の無視規則のままだと
+        NaN のまま固定エポックを最後まで走り続ける。
+
+        `update()` は rank_monitor_interval ごとにしか呼ばれないが、こちらは毎epoch呼ぶこと。
+        返り値: 非有限で崩壊と判定したら True。
+        """
+        if train_loss is None or np.isfinite(train_loss):
+            return False
+        self.collapsed = True
+        self.reason = (f'train_loss {train_loss} is not finite — weights are NaN/inf '
+                       f'and cannot recover')
+        return True
+
     def update(self, effective_rank, uniformity=None, train_loss=None):
         # NaN (e.g. from a diverged/collapsed run whose SVD blows up) must be treated
         # like None here: `NaN < threshold` is always False in Python, so without this

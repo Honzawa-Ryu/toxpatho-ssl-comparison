@@ -8,7 +8,8 @@
      ゲインが毎step `γ <- γ(1 - lr*wd)` で削られ、ep100で初期値の0.2%まで
      消えて恒久崩壊する（0017/0021/0023/0024 が全滅した実際の原因）。
   2. `lib/sslmodel/utils.py:CollapseMonitor` が「loss が ln(out_dim) に
-     張り付いた一様崩壊」を検出できること。旧実装は effective_rank だけを
+     張り付いた一様崩壊」を検出できること。加えて NaN/inf の train_loss を
+     patience なしで即検出できること（Barlow Twins 用, 2026-09-30）。旧実装は effective_rank だけを
      見ていたため、0024 が36 epoch崩壊し続けても最後まで発火しなかった。
 
 対象はどちらも外部依存の無い純粋ロジックだが、定義元のモジュールは
@@ -201,6 +202,43 @@ m.update(50.0, uniformity=-0.5, train_loss=LN8192 * 0.998)
 _check("閾値をわずかに下回る loss では発火しない", not m.collapsed)
 m.update(50.0, uniformity=-0.5, train_loss=LN8192)
 _check("loss == ln(out_dim) で発火する", m.collapsed)
+
+
+# =====================================================
+# 3. NaN/inf の train_loss（2026-09-30, Barlow Twins ViT-B/16 投入前に追加）
+#    BT は出力が定数に潰れると z.std(0)->0 で損失が NaN になる。update() は NaN を
+#    「無効な測定値」として無視する設計なので、別経路で即停止する必要がある。
+# =====================================================
+print("CollapseMonitor.check_loss_finite (NaN/inf)")
+
+for bad in (float("nan"), float("inf"), float("-inf")):
+    m = CollapseMonitor(rank_threshold=5.0, patience=2)
+    _check(f"train_loss={bad} は patience を待たず即崩壊", m.check_loss_finite(bad) and m.collapsed)
+    _check(f"train_loss={bad} の reason に回復不能と残る", "not finite" in m.reason)
+
+m = CollapseMonitor(rank_threshold=5.0, patience=2)
+for ok in (8000.0, 1.0e-3, 0.0, -1.5, np.float32(12.5), None):
+    m.check_loss_finite(ok)
+_check("有限値・None では発火しない", not m.collapsed and m.reason == "")
+
+# update() が NaN を無視する既存仕様は変えていない（eff_rank の SVD 発散でカウンタを
+# リセットされないための仕様）。NaN の検知は check_loss_finite の担当。
+m = CollapseMonitor(rank_threshold=5.0, patience=2, out_dim=8192)
+m.update(float("nan"), uniformity=float("nan"), train_loss=float("nan"))
+_check("update() は従来どおり NaN を無視する（検知は check_loss_finite 側）", not m.collapsed)
+
+# ---- 呼び出し順の回帰テスト ----
+# NaN 判定が state.pt 保存・early_stopping() より「後」にあると、EarlyStopping が
+# `NaN > best == False` で「改善」扱いとなり NaN 重みを checkpoint.pt(abort時の復元元)へ
+# 保存し、state.pt も NaN 重みで上書きされる。順序そのものが防御なのでソースで固定する。
+loop_src = open(os.path.join(REPO_ROOT, "lib/trainer/loop.py"), encoding="utf-8").read()
+i_check = loop_src.index("collapse_monitor.check_loss_finite(")
+i_state = loop_src.index("torch.save(state, f'{DIR_NAME}/state.pt')")
+i_early = loop_src.index("early_stopping(val_epoch_loss")
+_check("check_loss_finite は state.pt 保存より前", i_check < i_state)
+_check("check_loss_finite は early_stopping() より前", i_check < i_early)
+_check("復元元が無ければ NaN 重みを書き出さず例外で止める",
+       "refusing to write NaN weights" in loop_src)
 
 
 print()
