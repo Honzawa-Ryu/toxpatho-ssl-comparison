@@ -13,7 +13,7 @@
 > 実行は向こう。**コミットに「実装済み・未実行」が含まれるのは想定どおり。**
 > 詳細は [CLAUDE.md](CLAUDE.md)。
 
-最終更新: 2026-10-01（Barlow Twins ViT-B/16: exp 0029 を定義、BT 用の崩壊検知を調整。変更点の表を作成）
+最終更新: 2026-10-01（Barlow Twins ViT-B/16: **exp 0029 を投入した（job 3463160.opbs）**。崩壊検知を調整、変更点の表を作成）
 
 ### 2026-09-30: Barlow Twins (ViT-B/16) の準備 — NaN 即停止を実装・学習は未投入
 
@@ -87,6 +87,29 @@ local crops を見落とした誤り。0028 実測 0.46 ノード時間/epoch �
 - `preflight.sh`（初回投入前の点検）: 通過済み。`resume.sh`（2 本目以降）: 崩壊検知ログや非有限 loss が
   あれば resume を拒否する。`MIN_PER_EPOCH` は外挿値なので実測が出たら更新すること。
 - 0015 は未投入のまま残す（100 epoch・`--collapse_early_stop` 無しの旧定義）。
+
+### 🚀 exp 0029 を投入した（2026-10-01, **job 3463160.opbs**）
+
+ユーザーの条件付き許可（「崩壊検知が入っていて、余計なコストを消費しないなら投入してよい」）のもとで投入。
+投入したのは commit `95b8e58`。routing queue `regular-g` → 実行キュー `small-g`（8ノード / walltime 48h /
+予約トークン 384.0 = 8×48）。投入時点は QUEUED。
+
+**判断の根拠**: 起動直後に失敗するもの（フラグ綴り・venv・メモリ）は数ノード時間で止まり、preflight は全通過。
+学習中の NaN / 発散 / eff_rank 低下は検知して停止する。見逃しうるのは「損失が有限のまま高止まりする停滞」のみ。
+
+```bash
+# 起動確認（BT 用の設定が効いているか。Fold と LARS param-groups は起動直後に出る）
+grep -a -E "Fold 0|LARS param-groups|weight decay" logs/0029_20260930_bt_vitb16_step_matched/3463160.opbs.OU
+# 経過（1 epoch ごとに 1 行）
+grep -a "Epoch: " logs/0029_20260930_bt_vitb16_step_matched/3463160.opbs.OU | tail -20
+# 止まったか
+grep -a -E "Non-finite|Diverged|Collapse detected|Traceback" logs/0029_20260930_bt_vitb16_step_matched/3463160.opbs.OU
+```
+
+**最初に確認すること**: (1) 1 epoch の所要時間（見積り 1.65〜2.6 分@8ノード。これより大幅に遅ければ
+1600 epoch の見積りが崩れる。`resume.sh` の `MIN_PER_EPOCH` も実測で更新する）、(2) 損失の初期値と
+下がり方（跳ね返り判定の比率 2.0 を見直す材料）、(3) ep5 / ep10 の `eff_rank` と `uniformity`
+（BT の実際の値を初めて測れる。uniformity 無効化の判断の裏づけ）。
 
 **2026-10-01: BT 用の崩壊検知を調整した（投入前の点検で見つけた穴）**
 - 🔴 `uniformity` 判定が BT で**健全なランを誤停止しうる**ことを発見。uniformity は**投影出力**で測るが、
