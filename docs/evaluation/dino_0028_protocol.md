@@ -3,13 +3,69 @@
 2026-10-01 のユーザー合意: まず学習の良否を評価し、その後に CKA 等で学習自体を分析する。
 作業ブランチは `eval/model-evaluation`。学習コード・学習出力は読み取りのみとし、
 評価結果はユーザー指示により、元プロジェクト直下の `outputs/evaluation_dino_0028/` に保存する。
-今回の CKA 結果は `outputs/evaluation_dino_0028/cka_20261001/`。
+最初の5点の CKA 結果は `outputs/evaluation_dino_0028/cka_20261001/`。
 評価用 worktree の同名出力パスは、その保存先へのシンボリックリンクにしてある。
+追加の全96点は `outputs/evaluation_dino_0028/dense_20261001/` に保存した。
 
 同日の追加指示: ベンチマークはユーザーが用意し、その間に実行できる CKA 等を先に行う。
 旧 `wsi-ad/data/shards/` の画像を使った結果は探索的な表現解析として区別する。
 学習時の memmap index が見つかっていないため、事前学習との WSI 重複は未確認。
 ベンチマークによる第1段階の性能評価は引き続き必要。
+
+## 追加実行: 5 epoch刻みと後半のEffrank（完了）
+
+ユーザーの追加指示により、保存済みep5〜480の全96本を同じ2,000枚で比較した。
+全体CKAとスライド平均除去後CKAの96×96行列、隣接5 epochのCKA、中心化スペクトル、
+L2正規化と最終LayerNormの倍率・バイアス除去後のrank、学習ログとの対応を出力。
+スライド平均除去後CKAは全パッチをまとめて計算し、スライド別CKAの平均とは区別する。
+
+特異値entropy rankはep320の413.1からep440の504.2へ増加し、ep480は509.1。
+増加はおおむね300〜440に続き、450以降は横ばい。L2正規化・最終LayerNorm除去後も残る。
+90%分散の成分数はep320の119からep480の216へ増加した。
+後半の代表点と大きな増分の両端、計12点をFP32（TF32無効）で照合し、rank差は最大0.0324%。
+この操作は内部層のLayerNormを除かない。学習率・weight decay等の因果効果も分離していない。
+rankの増加を病理所見の識別向上と同一視しない。
+
+[詳細レポートと図](/workspace/andre01/honzawa/02-playground/toxpatho-ssl-comparison/outputs/evaluation_dino_0028/dense_20261001/report.md)。
+入力・特徴・最終LayerNorm・ログのハッシュを保存し、前回5点の特徴とCKAの一致を確認した。
+
+### 再実行手順
+
+評価用worktreeで実行する。下記は保存済みの結果を保つため別フォルダへ出力する例。
+既存環境を使い、GPU1枚で抽出、CKA・スペクトルはCPUで解析する。
+
+```bash
+EVAL_PYTHON=/workspace/andre01/honzawa/01-toxpatho/wsi-ad/.venv/bin/python3
+EVAL_ROOT=/workspace/andre01/honzawa/02-playground/toxpatho-ssl-comparison
+EVAL_SHARD=/workspace/andre01/honzawa/01-toxpatho/wsi-ad/data/shards/shard_0000.tar
+EVAL_OUT="$EVAL_ROOT/outputs/evaluation_dino_0028/dense_repeat"
+export OPENBLAS_NUM_THREADS=4 OMP_NUM_THREADS=4 MKL_NUM_THREADS=4 CUDA_VISIBLE_DEVICES=0
+
+"$EVAL_PYTHON" -u scripts/analysis/analyze_dino_epochs.py \
+  --config scripts/evaluate/dino_0028_dense.yaml \
+  --shard "$EVAL_SHARD" --checkpoint-root "$EVAL_ROOT" \
+  --same-sample-as "$EVAL_ROOT/outputs/evaluation_dino_0028/cka_20261001" \
+  --output "$EVAL_OUT" --extract-only --device cuda:0 --batch-size 64
+
+"$EVAL_PYTHON" -u scripts/analysis/analyze_dino_dense.py \
+  --output "$EVAL_OUT" --training-dir "$EVAL_ROOT/outputs/0028_20260917_dino_lr_half"
+
+"$EVAL_PYTHON" -u scripts/analysis/analyze_dino_epochs.py \
+  --config scripts/evaluate/dino_0028_precision.yaml \
+  --shard "$EVAL_SHARD" --checkpoint-root "$EVAL_ROOT" \
+  --same-sample-as "$EVAL_OUT" --output "${EVAL_OUT}_fp32" \
+  --extract-only --precision fp32 --device cuda:0 --batch-size 64
+
+"$EVAL_PYTHON" -u scripts/analysis/analyze_dino_epochs.py \
+  --config scripts/evaluate/dino_0028_precision_jumps.yaml \
+  --shard "$EVAL_SHARD" --checkpoint-root "$EVAL_ROOT" \
+  --same-sample-as "$EVAL_OUT" --output "${EVAL_OUT}_fp32_jumps" \
+  --extract-only --precision fp32 --device cuda:0 --batch-size 64
+
+"$EVAL_PYTHON" -u scripts/analysis/analyze_dino_dense.py \
+  --output "$EVAL_OUT" --precision-only \
+  --fp32-output "${EVAL_OUT}_fp32" --fp32-output "${EVAL_OUT}_fp32_jumps"
+```
 
 ## 第1段階: 学習の良否
 

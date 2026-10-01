@@ -1,6 +1,7 @@
 """Extract exp 0028 features and run exploratory CKA/geometry on local images."""
 
 import argparse
+import json
 from pathlib import Path
 import sys
 
@@ -25,7 +26,12 @@ def main():
     parser.add_argument("--slides", type=int, default=100)
     parser.add_argument("--batch-size", type=int, default=64)
     parser.add_argument("--device", default="cuda:0")
-    parser.add_argument("--analyze-only", action="store_true")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--analyze-only", action="store_true")
+    mode.add_argument("--extract-only", action="store_true")
+    parser.add_argument("--precision", choices=("bf16", "fp32"), default="bf16")
+    parser.add_argument("--same-sample-as", type=Path,
+                        help="Require the same sample SHA256 as this extraction directory")
     args = parser.parse_args()
     for name in ("scan_patches", "per_slide", "slides", "batch_size"):
         if getattr(args, name) <= 0:
@@ -39,7 +45,11 @@ def main():
             parser.error("--shard and --checkpoint-root are required for extraction")
         extract(args.shard, args.checkpoint_root, epochs, args.output,
                 args.scan_patches, args.per_slide, args.slides,
-                args.batch_size, args.device)
+                args.batch_size, args.device, args.precision,
+                (json.loads((args.same_sample_as / 'extract_manifest.json').read_text())['sample_sha256']
+                 if args.same_sample_as else None))
+    if args.extract_only:
+        return
     report_dir = args.report_dir or args.output
     summary = analyze(args.output, report_dir)
     print(f"Complete: {summary['n_patches']} patches; report={report_dir / 'report.md'}")

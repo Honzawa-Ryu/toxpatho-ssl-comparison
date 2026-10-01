@@ -30,13 +30,18 @@
       手順: [docs/evaluation/dino_0028_protocol.md](docs/evaluation/dino_0028_protocol.md)。
       - [x] 評価順序・対象epochを設定化、5本のチェックポイントの配置確認、入力確認CLIのCPUスモーク。
       - [ ] ユーザーが用意するベンチマークの所見・画像・分割・正常モデルを照合。
-      - [ ] andre01 の評価環境を確定し、第1段階を実行。**結果はまだ無い。**
+      - [x] andre01 の解析環境を確定（既存 wsi-ad/.venv を読み取りのみで利用）。
+      - [ ] ベンチマークによる第1段階を実行。**下流性能の結果はまだ無い。**
       - [x] **同日の追加指示で CKA を先行実行**。旧 shard の100スライド×20枚で5epochを比較。
         全体CKAとスライド平均を除いたCKA、特徴健全性、η²、代表パッチを生成。
         [レポート](/workspace/andre01/honzawa/02-playground/toxpatho-ssl-comparison/outputs/evaluation_dino_0028/cka_20261001/report.md)。学習WSIとの重複は未確認。
       - [ ] ベンチマーク結果と今回の CKA・特徴推移を対応づけて解釈する。
-      この項目が現在の優先順。以下の以前の計画にある Miyabi 抽出や全96epoch評価を
-      そのまま実行せず、現時点の入力と5epochの計画に合わせる。
+      - [x] **追加指示で全96時点（ep5〜480、5刻み）を解析**。同じ2,000枚で全CKAと
+        隣接CKA、スペクトル、L2/最終LayerNorm除去の確認、後半12点のFP32照合を完了。
+        rankは300〜440頃に増え、その後ほぼ横ばい。精度間rank差は最大0.0324%。
+        [詳細レポート](/workspace/andre01/honzawa/02-playground/toxpatho-ssl-comparison/outputs/evaluation_dino_0028/dense_20261001/report.md)。
+      この項目が現在の優先順。以下の以前の計画にある Miyabi 抽出はそのまま実行せず、
+      ユーザーが用意するベンチマークの入力に合わせる。全96点の表現解析は実施済み。
 - [x] **DINO ep85 の表現評価（幾何）**（HANDOFFタスク1）→ **完了 2026-09-04, exp 0027 / job 9672**
       全19チェックポイントを同一2,000パッチで測定。**480 epoch 完走の根拠は出なかった**
       （η²_slide が ep45 の 0.651 から ep85 の 0.639 までしか動かない）。

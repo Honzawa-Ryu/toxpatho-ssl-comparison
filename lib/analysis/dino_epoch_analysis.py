@@ -59,7 +59,8 @@ def sample_tar(path, scan_patches, per_slide, max_slides):
 
 
 def extract(shard, checkpoint_root, epochs, output, scan_patches=5000,
-            per_slide=20, max_slides=100, batch_size=64, device_name="cuda:0"):
+            per_slide=20, max_slides=100, batch_size=64, device_name="cuda:0",
+            precision="bf16", expected_sample_hash=None):
     import torch
     import timm
     import torchvision
@@ -74,6 +75,9 @@ def extract(shard, checkpoint_root, epochs, output, scan_patches=5000,
     if device.type == "cuda" and not torch.cuda.is_available():
         raise RuntimeError("CUDA requested but unavailable")
     torch.set_num_threads(4)
+    if precision == "fp32":
+        torch.backends.cuda.matmul.allow_tf32 = False
+        torch.backends.cudnn.allow_tf32 = False
     checkpoints = [Path(checkpoint_root) / "outputs/0028_20260917_dino_lr_half"
                    / f"model_ep{epoch}.pt" for epoch in epochs]
     for checkpoint in checkpoints:
@@ -100,6 +104,8 @@ def extract(shard, checkpoint_root, epochs, output, scan_patches=5000,
     del tensors
     meta_text = json.dumps(selected, ensure_ascii=False, indent=2)
     sample_hash = hashlib.sha256(meta_text.encode()).hexdigest()
+    if expected_sample_hash is not None and sample_hash != expected_sample_hash:
+        raise ValueError("Selected images/order differ from the reference sample")
     (output / "patches_meta.json").write_text(meta_text + "\n")
     np.save(output / "patches_thumbs.npy", np.stack(thumbs))
     manifest = {
@@ -112,7 +118,9 @@ def extract(shard, checkpoint_root, epochs, output, scan_patches=5000,
         "purpose": "exploratory representation analysis, no downstream performance estimate",
         "backbone": "student_backbone", "model": "vit_base_patch16_224",
         "preprocessing": "RGB; torchvision Resize 224x224 (bilinear); ImageNet mean/std",
-        "precision": "bf16 autocast on CUDA, embeddings saved as float32",
+        "precision": ("bf16 autocast on CUDA, embeddings saved as float32"
+                      if precision == "bf16" else "fp32 inference, embeddings saved as float32"),
+        "expected_epochs": list(epochs), "complete": False,
         "device": str(device), "torch": torch.__version__, "timm": timm.__version__,
         "torchvision": torchvision.__version__, "checkpoints": [],
     }
@@ -124,6 +132,8 @@ def extract(shard, checkpoint_root, epochs, output, scan_patches=5000,
                           for key, value in state.items() if key.startswith("student_backbone.")}
         if not backbone_state:
             raise ValueError(f"No student_backbone weights in {checkpoint}")
+        norm_weight = backbone_state["norm.weight"].float().numpy().copy()
+        norm_bias = backbone_state["norm.bias"].float().numpy().copy()
         model = timm.create_model("vit_base_patch16_224", num_classes=0,
                                   dynamic_img_size=True, drop_path_rate=.1)
         model.load_state_dict(backbone_state, strict=True)
@@ -133,7 +143,7 @@ def extract(shard, checkpoint_root, epochs, output, scan_patches=5000,
         with torch.inference_mode():
             for i in range(0, len(x), batch_size):
                 with torch.autocast(device_type=device.type, dtype=torch.bfloat16,
-                                    enabled=device.type == "cuda"):
+                                    enabled=device.type == "cuda" and precision == "bf16"):
                     result = model(x[i:i + batch_size].to(device))
                 features.append(result.float().cpu().numpy())
         embedding = np.concatenate(features)
@@ -142,10 +152,14 @@ def extract(shard, checkpoint_root, epochs, output, scan_patches=5000,
         name = f"ep{epoch:03d}"
         feature_path = output / f"emb_{name}.npy"
         np.save(feature_path, embedding)
+        norm_path = output / f"norm_{name}.npz"
+        np.savez(norm_path, weight=norm_weight, bias=norm_bias)
         entry = {"name": name, "epoch": epoch, "path": str(checkpoint.resolve()),
                  "checkpoint_sha256": hash_file(checkpoint), "shape": list(embedding.shape),
-                 "embedding_sha256": hash_file(feature_path), "seconds": time.monotonic() - start}
+                 "embedding_sha256": hash_file(feature_path),
+                 "norm_affine_sha256": hash_file(norm_path), "seconds": time.monotonic() - start}
         manifest["checkpoints"].append(entry)
+        manifest["complete"] = len(manifest["checkpoints"]) == len(epochs)
         (output / "extract_manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
         print(f"{name}: {embedding.shape}, {entry['seconds']:.1f}s", flush=True)
         del model, features
