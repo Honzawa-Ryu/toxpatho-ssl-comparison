@@ -66,6 +66,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument('--collapse_early_stop', action='store_true') # if set, abort when effective_rank stays collapsed
     parser.add_argument('--collapse_rank_threshold', type=float, default=5.0) # effective_rank below this counts as collapsed
     parser.add_argument('--collapse_patience', type=int, default=2) # consecutive rank_monitor_interval checks below threshold before aborting
+    parser.add_argument('--collapse_ignore_uniformity', action='store_true') # uniformity 判定を無効化(BT: 損失がバッチ平均不変で、健全でも ~0 になりうる)
+    parser.add_argument('--collapse_loss_rebound', type=float, default=0.0) # >0: train_loss が(epoch>=min_epoch 以降の)最小値のこの倍率を超えた状態が続いたら発散として停止。0=無効
+    parser.add_argument('--collapse_loss_rebound_min_epoch', type=int, default=20)
+    parser.add_argument('--collapse_loss_rebound_patience', type=int, default=3)
     parser.add_argument('--freeze_backbone', action='store_true') # whether to freeze backbone during training
     # Transform (augmentation) settings
     parser.add_argument('--color_plob', type=float, default=0.8)

@@ -21,11 +21,20 @@
 #     4. lr 終端: 論文 end_lr_ratio 0.001、ここは --lr_min 0.0 (差はピーク比 0.1% 以下)。
 #     5. 精度: 論文は AMP(fp16)、ここは bf16 autocast(損失も bf16 で返る)。
 #
-# ■ 崩壊したら止める（Goal.yaml 方針3, 2026-09-30）
-#   --collapse_early_stop。NaN/inf の train_loss は即停止(CollapseMonitor.check_loss_finite)、
-#   それ以外は rank_monitor_interval=5 × patience=2 の uniformity / eff_rank 判定。
-#   DINO の ln(out_dim) 相当の損失天井判定は入れていない(BT の損失は batch 依存が強く、
-#   B=2048 の実測なしに閾値を決められないため)。初回ランの損失曲線を見て決める。
+# ■ 崩壊したら止める（Goal.yaml 方針3, 2026-09-30 / 2026-10-01 BT 用に調整）
+#   --collapse_early_stop に加えて BT 用に次の設定を入れている:
+#   (1) NaN/inf の train_loss は即停止(毎 epoch, patience なし)。BT は出力が定数に潰れると
+#       z.std(0)->0 で損失が NaN になる(CPU で再現)。この実装の BT 損失は std に eps を足さない
+#       ので NaN になる(公式コードは BatchNorm1d の eps で有限のまま、は未照合)。
+#   (2) --collapse_ignore_uniformity: uniformity 判定を無効化。BT の損失はバッチ平均を引いてから
+#       相関を取るため投影出力の共通オフセットが自由で、健全でも uniformity ≈ 0 になりうる。
+#       BT は out_dim を持たず補助指標が常時有効になるので、有効のままだと ep10 の最初の判定で
+#       健全なランを誤停止しうる(DINO の健全時でさえ -0.006。tests/test_collapse_guards.py で再現)。
+#   (3) --collapse_loss_rebound 2.0: epoch>=20 以降の損失最小値の2倍超が3 epoch続いたら発散として停止
+#       (NaN にならない有限の発散への備え)。⚠️ 比率・patience は較正していない。止める側に倒してある
+#       (誤停止の被害は数ノード時間、見逃すと数百ノード時間)。初回ランの損失曲線を見て見直すこと。
+#   (4) eff_rank < 5 が rank_monitor_interval=5 x patience=2 で続けば停止(従来どおり。ただし鈍い指標)。
+#   ⚠️ 検知できないもの: 損失が有限のまま高止まりする停滞。初回ランの経過は人が確認すること。
 #   止まったら原因を切り分けて修正し、**新しい実験番号**で再実行する。
 #   修正候補の第一は optimizer (LARS -> AdamW)。ただし逸脱になるので必ず記録する。
 #
@@ -110,7 +119,7 @@ RUN_COMMAND="python ${PYTHON_PATH} \
     --batch_size 256 \
     --proj_dim 8192 --bt_lambda 5e-3 \
     --num_epoch 1600 --warmup_t 16 --lr_min 0.0 \
-    --collapse_early_stop \
+    --collapse_early_stop --collapse_ignore_uniformity --collapse_loss_rebound 2.0 \
     --rank_monitor_interval 5 --save_interval 5 --resume"
 
 # =====================================================

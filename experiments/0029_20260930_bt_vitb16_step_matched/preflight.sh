@@ -53,6 +53,9 @@ echo "ok : .venv はコンテナ python 土台 + system-site-packages + timm あ
 # 7. 実験定義の整合: 1600 epoch x 390 step ≒ 論文 625,000 step / global batch 2048
 grep -q -- "--num_epoch 1600" "${PROJECT_ROOT}/experiments/${EXP_NAME}/run_slurm.sh" || fail "num_epoch が 1600 でない"
 grep -q -- "--collapse_early_stop" "${PROJECT_ROOT}/experiments/${EXP_NAME}/run_slurm.sh" || fail "--collapse_early_stop が無い"
+for fl in "--collapse_ignore_uniformity" "--collapse_loss_rebound 2.0"; do
+  grep -q -- "${fl}" "${PROJECT_ROOT}/experiments/${EXP_NAME}/run_slurm.sh" || fail "${fl} が無い(BT 用の崩壊検知設定。無いと誤停止/見逃しの恐れ)"
+done
 grep -q "^#PBS -l select=8" "${PROJECT_ROOT}/experiments/${EXP_NAME}/run_slurm.sh" || fail "select=8 でない(batch 2048 にならない)"
 echo "ok : 1600 epoch / --collapse_early_stop / 8ノード"
 

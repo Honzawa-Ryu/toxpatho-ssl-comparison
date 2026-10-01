@@ -10,7 +10,7 @@ import os
 import datetime
 import random
 import logging
-from typing import List, Tuple, Union, Sequence
+from typing import List, Optional, Tuple, Union, Sequence
 
 import numpy as np
 import pandas as pd
@@ -484,14 +484,28 @@ class CollapseMonitor:
     """
     def __init__(self, rank_threshold: float = 5.0, patience: int = 2,
                  out_dim: int = 0, loss_ratio: float = 0.999,
-                 uniformity_threshold: float = -0.05,
-                 secondary_ratio: float = 0.9):
+                 uniformity_threshold: Optional[float] = -0.05,
+                 secondary_ratio: float = 0.9,
+                 loss_rebound_ratio: float = 0.0,
+                 loss_rebound_min_epoch: int = 20,
+                 loss_rebound_patience: int = 3):
         self.rank_threshold = rank_threshold
         self.patience = patience
         self.loss_ceiling = float(np.log(out_dim)) if out_dim and out_dim > 1 else None
         self.loss_ratio = loss_ratio
+        # None = uniformity 判定を無効にする。BT のように損失がバッチ平均を引いてから
+        # 相関を取る手法では、投影出力の各次元の共通オフセットが自由なので、健全でも
+        # 正規化後のベクトルがほぼ平行(uniformity ≈ 0)になりうる。DINO の健全時でさえ
+        # -0.006 (0028) で、out_dim を持たない手法では損失天井による絞り込みも効かない
+        # (secondary_enabled が常に True)ため、有効のままだと最初の判定で健全なランを誤停止する。
         self.uniformity_threshold = uniformity_threshold
         self.secondary_ratio = secondary_ratio
+        # 損失の持続的な跳ね返り(発散)判定。0 = 無効(既定。従来の実験の挙動は変えない)。
+        self.loss_rebound_ratio = loss_rebound_ratio
+        self.loss_rebound_min_epoch = loss_rebound_min_epoch
+        self.loss_rebound_patience = loss_rebound_patience
+        self._loss_min = None
+        self._rebound_counter = 0
         self.counter = 0
         self.collapsed = False
         self.reason = ''
@@ -515,6 +529,37 @@ class CollapseMonitor:
         self.reason = (f'train_loss {train_loss} is not finite — weights are NaN/inf '
                        f'and cannot recover')
         return True
+
+    def check_loss_rebound(self, epoch, train_loss):
+        """損失が「最小値の ratio 倍」を超えた状態が patience epoch 続いたら発散とみなす。
+
+        NaN にならない発散(損失が有限のまま跳ね上がって戻らない)への備え。`check_loss_finite`
+        は NaN/inf しか見ないので、これが無いと有限の発散は固定 epoch を最後まで走り続ける。
+        基準の最小値は `loss_rebound_min_epoch` 以降だけで取る: warmup 中の損失の動きに
+        引きずられないため。⚠️ ratio / patience は **較正していない**(BT の損失曲線の実測が
+        無い)。健全なランを止める側に倒れても被害は数ノード時間、見逃すと数百ノード時間なので
+        止める側に倒してある。初回ランの損失曲線を見て見直すこと。
+        毎epoch、全rankで呼ぶこと(train_loss は all_reduce 済みで全rank同一なので判定も揃う)。
+        返り値: 発散と判定したら True。
+        """
+        if (not self.loss_rebound_ratio or train_loss is None
+                or not np.isfinite(train_loss) or epoch < self.loss_rebound_min_epoch):
+            return False
+        if self._loss_min is None or train_loss < self._loss_min:
+            self._loss_min = float(train_loss)
+        if self._loss_min <= 0:
+            return False
+        if train_loss > self.loss_rebound_ratio * self._loss_min:
+            self._rebound_counter += 1
+        else:
+            self._rebound_counter = 0
+        if self._rebound_counter >= self.loss_rebound_patience:
+            self.collapsed = True
+            self.reason = (f'train_loss {train_loss:.4f} > {self.loss_rebound_ratio} x running min '
+                           f'{self._loss_min:.4f} for {self._rebound_counter} consecutive epochs '
+                           f'— diverged')
+            return True
+        return False
 
     def update(self, effective_rank, uniformity=None, train_loss=None):
         # NaN (e.g. from a diverged/collapsed run whose SVD blows up) must be treated
@@ -543,7 +588,8 @@ class CollapseMonitor:
         if self.loss_ceiling is not None and _valid(train_loss):
             secondary_enabled = train_loss >= self.loss_ceiling * self.secondary_ratio
         if secondary_enabled:
-            if _valid(uniformity) and uniformity > self.uniformity_threshold:
+            if (self.uniformity_threshold is not None and _valid(uniformity)
+                    and uniformity > self.uniformity_threshold):
                 reasons.append(f'uniformity {uniformity:.4f} > {self.uniformity_threshold} '
                                f'— all samples collapsed onto one point')
             if _valid(effective_rank) and effective_rank < self.rank_threshold:

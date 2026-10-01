@@ -9,7 +9,8 @@
      消えて恒久崩壊する（0017/0021/0023/0024 が全滅した実際の原因）。
   2. `lib/sslmodel/utils.py:CollapseMonitor` が「loss が ln(out_dim) に
      張り付いた一様崩壊」を検出できること。加えて NaN/inf の train_loss を
-     patience なしで即検出できること（Barlow Twins 用, 2026-09-30）。旧実装は effective_rank だけを
+     patience なしで即検出できること（Barlow Twins 用, 2026-09-30）。さらに BT 用に
+     uniformity 判定の無効化と損失の跳ね返り(発散)判定を持つこと（2026-10-01）。旧実装は effective_rank だけを
      見ていたため、0024 が36 epoch崩壊し続けても最後まで発火しなかった。
 
 対象はどちらも外部依存の無い純粋ロジックだが、定義元のモジュールは
@@ -125,8 +126,9 @@ _check("空グループを作らない",
 # 2. 崩壊判定
 # =====================================================
 print("lib/sslmodel/utils.py:CollapseMonitor")
+from typing import Optional
 CollapseMonitor = load_defs("lib/sslmodel/utils.py", ["CollapseMonitor"],
-                            namespace={"np": np})["CollapseMonitor"]
+                            namespace={"np": np, "Optional": Optional})["CollapseMonitor"]
 
 LN8192 = float(np.log(8192))  # = 9.0109: DINO out_dim=8192 の一様崩壊値
 
@@ -239,6 +241,80 @@ _check("check_loss_finite は state.pt 保存より前", i_check < i_state)
 _check("check_loss_finite は early_stopping() より前", i_check < i_early)
 _check("復元元が無ければ NaN 重みを書き出さず例外で止める",
        "refusing to write NaN weights" in loop_src)
+
+
+# =====================================================
+# 4. BT 用の設定（2026-10-01, 投入前に追加）
+#    (a) uniformity 判定の無効化: BT は out_dim を持たないので補助指標が常時有効になり、
+#        DINO の健全時でさえ -0.006 の uniformity で最初の判定(ep10)に健全なランを誤停止しうる。
+#    (b) 損失の持続的な跳ね返り(NaN にならない発散)の判定。
+# =====================================================
+print("CollapseMonitor: uniformity 無効化 / 損失の跳ね返り")
+
+# (a) 既定(-0.05)では、out_dim 無しだと健全な uniformity ~ -0.006 でも発火する = 誤停止の再現
+m = CollapseMonitor(rank_threshold=5.0, patience=2)
+for _ in range(2):
+    m.update(440.0, uniformity=-0.0056, train_loss=1.0)
+_check("[再現] 既定だと out_dim 無しで健全な uniformity(-0.006)でも誤停止する", m.collapsed)
+
+m = CollapseMonitor(rank_threshold=5.0, patience=2, uniformity_threshold=None)
+for _ in range(5):
+    m.update(440.0, uniformity=-0.0056, train_loss=1.0)
+_check("uniformity_threshold=None なら uniformity ~ 0 でも停止しない", not m.collapsed)
+m = CollapseMonitor(rank_threshold=5.0, patience=2, uniformity_threshold=None)
+for _ in range(2):
+    m.update(1.2, uniformity=-0.0056, train_loss=1.0)
+_check("uniformity を無効にしても eff_rank < 閾値の判定は生きている", m.collapsed)
+
+# (b) 跳ね返り判定
+def run_rebound(losses, start_epoch=1, **kw):
+    mm = CollapseMonitor(rank_threshold=5.0, patience=2, loss_rebound_ratio=2.0, **kw)
+    fired_at = None
+    for i, l in enumerate(losses):
+        if mm.check_loss_rebound(start_epoch + i, l):
+            fired_at = start_epoch + i
+            break
+    return mm, fired_at
+
+healthy = [8000.0 - 100.0 * i for i in range(60)]  # 単調に下がる健全な曲線
+mm, at = run_rebound(healthy)
+_check("単調に下がる健全な損失では発火しない", at is None and not mm.collapsed)
+
+# ep20 から基準(最小値)を取る: ep1-19 の値は基準にも判定にも使わない
+early_spike = [50000.0] * 19 + [3000.0] * 10
+mm, at = run_rebound(early_spike)
+_check("min_epoch(20) より前の大きな値は無視する(warmup の動きに引きずられない)", at is None)
+
+base = [1000.0] * 25   # ep1..25 の最小値は 1000
+mm, at = run_rebound(base + [2500.0, 2500.0, 2500.0])
+_check("最小値の2倍超が3 epoch続くと発散と判定する", at == 28 and "diverged" in mm.reason)
+mm, at = run_rebound(base + [2500.0, 2500.0, 1500.0, 2500.0, 2500.0])
+_check("途中で戻ればカウンタがリセットされる(連続でなければ発火しない)", at is None)
+mm, at = run_rebound(base + [1999.0] * 10)
+_check("ちょうど2倍未満なら発火しない", at is None)
+
+mm, at = run_rebound(base + [float("nan"), 2500.0, 2500.0])
+_check("非有限値は rebound 側では扱わない(check_loss_finite の担当)", at is None)
+
+m = CollapseMonitor(rank_threshold=5.0, patience=2)  # 既定 ratio=0 = 無効
+_check("既定(ratio=0)では無効 = 既存の実験の挙動は変わらない",
+       not any(m.check_loss_rebound(e, l) for e, l in enumerate([1.0] * 30 + [1e6] * 10, start=1)))
+
+# 配線(entry.py のCLI -> model.py の構築 -> loop.py の呼び出し順)
+entry_src = open(os.path.join(REPO_ROOT, "lib/trainer/entry.py"), encoding="utf-8").read()
+model_src = open(os.path.join(REPO_ROOT, "lib/trainer/model.py"), encoding="utf-8").read()
+for flag in ("--collapse_ignore_uniformity", "--collapse_loss_rebound",
+             "--collapse_loss_rebound_min_epoch", "--collapse_loss_rebound_patience"):
+    _check(f"CLI {flag} が定義されている", f"add_argument('{flag}'" in entry_src)
+for kw in ("uniformity_threshold=None if args.collapse_ignore_uniformity",
+           "loss_rebound_ratio=args.collapse_loss_rebound",
+           "loss_rebound_min_epoch=args.collapse_loss_rebound_min_epoch",
+           "loss_rebound_patience=args.collapse_loss_rebound_patience"):
+    _check(f"model.py が {kw.split('=')[0]} を CollapseMonitor へ渡している", kw in model_src)
+i_reb = loop_src_after = open(os.path.join(REPO_ROOT, "lib/trainer/loop.py"), encoding="utf-8").read()
+i_rebound = i_reb.index("collapse_monitor.check_loss_rebound(")
+_check("check_loss_rebound は state.pt 保存より前", i_rebound < i_reb.index("torch.save(state, f'{DIR_NAME}/state.pt')"))
+_check("check_loss_rebound は early_stopping() より前", i_rebound < i_reb.index("early_stopping(val_epoch_loss"))
 
 
 print()

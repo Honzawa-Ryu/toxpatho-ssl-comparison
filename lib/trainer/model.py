@@ -221,5 +221,9 @@ def prepare_model(
         collapse_monitor = sslmodel.utils.CollapseMonitor(
             rank_threshold=args.collapse_rank_threshold, patience=args.collapse_patience,
             out_dim=getattr(ssl_class, 'out_dim', 0),
+            uniformity_threshold=None if args.collapse_ignore_uniformity else -0.05,
+            loss_rebound_ratio=args.collapse_loss_rebound,
+            loss_rebound_min_epoch=args.collapse_loss_rebound_min_epoch,
+            loss_rebound_patience=args.collapse_loss_rebound_patience,
         )
     return model, criterion, optimizer, scheduler, early_stopping, collapse_monitor

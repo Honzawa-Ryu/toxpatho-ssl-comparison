@@ -234,19 +234,25 @@ def train(ctx: RunContext, model, criterion, optimizer, scheduler, early_stoppin
         #   - state.pt も NaN 重みで上書きされ、--resume しても壊れた状態から再開になる。
         # train_epoch_loss は all_reduce_mean 済みで全rank同一なので、追加の集合通信なしで
         # 全rankが同じ判断をする(片rankだけ抜けると他rankがDDPでhangする)。
-        if collapse_monitor is not None and collapse_monitor.check_loss_finite(train_epoch_loss):
+        # check_loss_finite / check_loss_rebound は毎epoch・全rankで呼ぶ(内部状態を全rankで揃える)。
+        nonfinite = collapse_monitor is not None and collapse_monitor.check_loss_finite(train_epoch_loss)
+        rebound = (collapse_monitor is not None and not nonfinite
+                   and collapse_monitor.check_loss_rebound(epoch + 1, train_epoch_loss))
+        if nonfinite or rebound:
             LOGGER.logger.info(
-                f'Non-finite train_loss at Epoch: {epoch + 1} — aborting to save compute '
-                f'[{collapse_monitor.reason}]'
+                f'{"Non-finite train_loss" if nonfinite else "Diverged train_loss"} at Epoch: {epoch + 1} '
+                f'— aborting to save compute [{collapse_monitor.reason}]'
             )
-            if not os.path.exists(early_stopping.path):
+            has_ckpt = os.path.exists(early_stopping.path)
+            if nonfinite and not has_ckpt:
                 # 有限な val_loss を1度も記録していない(= 復元できる健全な重みが無い)。
                 # NaN 重みを model_ssl.pt として書き出さないよう、例外で止める。
                 raise RuntimeError(
                     f'train_loss became non-finite at Epoch {epoch + 1} and no healthy '
                     f'checkpoint exists ({early_stopping.path}); refusing to write NaN weights'
                 )
-            distributed.unwrap(model).load_state_dict(torch.load(early_stopping.path))
+            if has_ckpt:
+                distributed.unwrap(model).load_state_dict(torch.load(early_stopping.path))
             return model, train_loss, True
         # 崩壊監視(effective_rank等)はrank0のみで実行する。eval_loaderは全rank同一
         # (data.py: split_by_rank=False)なので結果はどのrankで計算しても同じであり、

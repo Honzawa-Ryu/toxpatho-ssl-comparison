@@ -13,7 +13,7 @@
 > 実行は向こう。**コミットに「実装済み・未実行」が含まれるのは想定どおり。**
 > 詳細は [CLAUDE.md](CLAUDE.md)。
 
-最終更新: 2026-09-30（Barlow Twins ViT-B/16: exp 0029 を定義。NaN 即停止を実装。**qsub は未実施・承認待ち**）
+最終更新: 2026-10-01（Barlow Twins ViT-B/16: exp 0029 を定義、BT 用の崩壊検知を調整。変更点の表を作成）
 
 ### 2026-09-30: Barlow Twins (ViT-B/16) の準備 — NaN 即停止を実装・学習は未投入
 
@@ -87,6 +87,20 @@ local crops を見落とした誤り。0028 実測 0.46 ノード時間/epoch �
 - `preflight.sh`（初回投入前の点検）: 通過済み。`resume.sh`（2 本目以降）: 崩壊検知ログや非有限 loss が
   あれば resume を拒否する。`MIN_PER_EPOCH` は外挿値なので実測が出たら更新すること。
 - 0015 は未投入のまま残す（100 epoch・`--collapse_early_stop` 無しの旧定義）。
+
+**2026-10-01: BT 用の崩壊検知を調整した（投入前の点検で見つけた穴）**
+- 🔴 `uniformity` 判定が BT で**健全なランを誤停止しうる**ことを発見。uniformity は**投影出力**で測るが、
+  BT の損失はバッチ平均を引くため各次元の共通オフセットが自由で、健全でも ≈0 になりうる（DINO の健全時でさえ
+  -0.006）。BT は `out_dim=0` で補助指標が常時有効なので、既定のままだと ep10 の最初の判定で誤停止する
+  （`tests/test_collapse_guards.py` で再現。⚠️ BT の実際の uniformity 値は未測定）。
+  → `--collapse_ignore_uniformity`（None で無効化）を追加し、0029 で有効化。
+- NaN にならない有限の発散への備えとして `--collapse_loss_rebound 2.0`（epoch≥20 の最小値の 2 倍超が
+  3 epoch 連続で停止）を追加。⚠️ 比率は較正していない。止める側に倒した。既定は無効で既存実験は不変。
+- `tests/test_collapse_guards.py` は 54 項目で全通過。`loop.py` / `model.py` / `entry.py` は pyflakes 警告なし。
+- 論文との変更点の表: **[docs/bt_vitb16_vs_paper.md](docs/bt_vitb16_vs_paper.md)**。論文本文は ar5iv で照合済み、
+  公式コードと BYOL の値は**未照合**と明記。augmentation が BYOL 流と大きく違う（crop scale 0.2、回転 180°、
+  grayscale 0.05、blur 対称 0.4、solarization なし）ことも表に載せた。
+- ⚠️ **検知できないもの**: 損失が有限のまま高止まりする停滞。初回ランの経過は人が確認する。
 
 **未決・次にやること**
 1. **qsub はユーザー承認後**（約 350〜560 ノード時間）。`bash experiments/0029_20260930_bt_vitb16_step_matched/preflight.sh` の後で投入。
