@@ -1,0 +1,84 @@
+{
+  "source_shard": "/workspace/andre01/honzawa/01-toxpatho/wsi-ad/data/shards/shard_0000.tar",
+  "source_shard_bytes": 1388615680,
+  "sampling": {
+    "scan_first_patches": 5000,
+    "per_slide": 20,
+    "slides": 100,
+    "selection": "first per slide, lexicographic eligible slides"
+  },
+  "n_patches": 2000,
+  "sample_sha256": "1b67f79728598a6be3ddf4f81aaeff52a58d43038c1d3ab42fb93123cb8b9f8f",
+  "pretraining_overlap": "unknown: original training memmap index unavailable",
+  "purpose": "exploratory representation analysis, no downstream performance estimate",
+  "backbone": "student_backbone",
+  "model": "vit_base_patch16_224",
+  "preprocessing": "RGB; torchvision Resize 224x224 (bilinear); ImageNet mean/std",
+  "precision": "bf16 autocast on CUDA, embeddings saved as float32",
+  "device": "cuda:0",
+  "torch": "2.10.0+cu128",
+  "timm": "1.0.26",
+  "torchvision": "0.25.0+cu128",
+  "checkpoints": [
+    {
+      "name": "ep020",
+      "epoch": 20,
+      "path": "/workspace/andre01/honzawa/02-playground/toxpatho-ssl-comparison/outputs/0028_20260917_dino_lr_half/model_ep20.pt",
+      "checkpoint_sha256": "637e4bea956a0396efaf8a81f34c9af4b87d2a46d407ae080e23ec00291b8a7c",
+      "shape": [
+        2000,
+        768
+      ],
+      "embedding_sha256": "5c479e37b058c72511997ea4abc32ac26960ba847c07323b82f934a7eac5dc38",
+      "seconds": 4.446130516007543
+    },
+    {
+      "name": "ep085",
+      "epoch": 85,
+      "path": "/workspace/andre01/honzawa/02-playground/toxpatho-ssl-comparison/outputs/0028_20260917_dino_lr_half/model_ep85.pt",
+      "checkpoint_sha256": "1062502d0a718f52254a1a268698c8408e268537a873b4e011cce7c33ddc84a3",
+      "shape": [
+        2000,
+        768
+      ],
+      "embedding_sha256": "a5468e2d454ec84570b68e713284e9b5824058fe5fbc564d5bb0a3cda50e2ceb",
+      "seconds": 2.4180452739819884
+    },
+    {
+      "name": "ep160",
+      "epoch": 160,
+      "path": "/workspace/andre01/honzawa/02-playground/toxpatho-ssl-comparison/outputs/0028_20260917_dino_lr_half/model_ep160.pt",
+      "checkpoint_sha256": "a831199474ea8bb5ecfaeed2f8a9db528e364daf2774247fda4aac0a9ebf5528",
+      "shape": [
+        2000,
+        768
+      ],
+      "embedding_sha256": "9be56b5327270e4c41b74ae185152ad9ff5b1466eedf930d5039d635d381fe25",
+      "seconds": 2.457532549276948
+    },
+    {
+      "name": "ep320",
+      "epoch": 320,
+      "path": "/workspace/andre01/honzawa/02-playground/toxpatho-ssl-comparison/outputs/0028_20260917_dino_lr_half/model_ep320.pt",
+      "checkpoint_sha256": "f06d2a3f731a6a8d52aab94c0fb9e089ec367c54669b624966199295eccf6af3",
+      "shape": [
+        2000,
+        768
+      ],
+      "embedding_sha256": "d509274d124a05deb653bc5b5942713d1379b08f62649373a0c5671399d348c5",
+      "seconds": 2.467587403021753
+    },
+    {
+      "name": "ep480",
+      "epoch": 480,
+      "path": "/workspace/andre01/honzawa/02-playground/toxpatho-ssl-comparison/outputs/0028_20260917_dino_lr_half/model_ep480.pt",
+      "checkpoint_sha256": "9391104a34124ba7e48c2344061b00a7b9e24a79175d0832afa7ff95f45aca60",
+      "shape": [
+        2000,
+        768
+      ],
+      "embedding_sha256": "a22cd0350583c238bac8787b7b2c578b084bc27a2e57777c26ad9a533e1c6a92",
+      "seconds": 2.4202051674947143
+    }
+  ]
+}

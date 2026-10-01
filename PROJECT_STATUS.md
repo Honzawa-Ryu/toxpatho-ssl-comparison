@@ -13,7 +13,72 @@
 > 実行は向こう。**コミットに「実装済み・未実行」が含まれるのは想定どおり。**
 > 詳細は [CLAUDE.md](CLAUDE.md)。
 
-最終更新: 2026-10-01（評価用ブランチで DINO 0028 の評価順序・対象を固定。評価は未実行）
+最終更新: 2026-10-01（DINO 0028 の CKA・特徴解析を andre01 で実行。所見ベンチマークは準備待ち）
+
+### 2026-10-01: ベンチマーク準備の間に CKA・特徴解析を先行実行
+
+ユーザーの追加指示: **ベンチマークはユーザーが用意する。その間に今できる CKA 等を実行する。**
+Goal.yaml と評価手順へ先行実行の扱いを追記。所見別の下流評価は引き続き未実施。
+
+**データと実行**:
+
+- 旧 `01-toxpatho/wsi-ad/data/shards/` に20本・約26GiBの病理パッチ画像が存在。
+  `shard_0000.tar` の先頭5,000パッチのメタデータを読み、100スライドから各20枚を固定。
+  **同じ2,000枚・同じ順序**で ep20 / ep85 / ep160 / ep320 / ep480 の student 特徴を抽出した。
+- 元の実験0028の学習 memmap/index は andre01 では見つかっていない。
+  **事前学習の WSI との重複は未確認**。今回の解析は探索的な特徴の比較であり、
+  未知データでの下流性能評価と区別する。以前の exp0027 や旧手法比較の数値とも直接比較しない。
+- `wsi-ad/.venv/bin/python3` を読み取りのみで利用。
+  torch 2.10.0+cu128 / timm 1.0.26 / torchvision 0.25.0+cu128。
+  andre01 の GPU0 (RTX A6000) 1枚で実行し、終了コード0。ジョブ投入・学習は行っていない。
+- backbone 重みは5本すべて `strict=True` で読み込み。画像・チェックポイント・抽出特徴の
+  SHA256 を保存。元の学習フォルダ・出力・環境には変更していない。
+
+**結果（このパッチ集合での値）**:
+
+| 指標 | ep20 | ep85 | ep160 | ep320 | ep480 |
+|---|---:|---:|---:|---:|---:|
+| 中心化後の特異値effective rank | 235.0 | 362.2 | 382.0 | 413.1 | 509.1 |
+| η²_slide (L2正規化後) | 0.579 | 0.445 | 0.434 | 0.408 | 0.362 |
+| η²_color (共通RGBクラスタ) | 0.261 | 0.179 | 0.168 | 0.140 | 0.128 |
+| 平均パッチ間cosine | 0.902 | 0.580 | 0.566 | 0.468 | 0.357 |
+
+- NaN/inf は全5本で0。η²_slide の置換20回の参考値は約0.050。
+- 全体 CKA: ep20↔ep480 = **0.844**、ep85↔ep160 = **0.971**、ep320↔ep480 = **0.917**。
+- スライド平均を引いて全パッチをまとめた CKA:
+  ep20↔ep480 = **0.793**、ep320↔ep480 = **0.909**。
+  これはスライド別CKAの平均ではない。各スライド20枚では標本数の影響が大きいため、
+  その平均を「組織の見方」の指標には採用しなかった。
+- 各 epoch の k-means 10群の代表画像も生成し、ep480 の画像集・CKA図・スペクトルを目視確認。
+  所見ラベルが無いので、クラスタへの病変名の付与はしていない。
+
+この集合では特徴が広がり、スライド・色で説明される割合が下がり、終盤にも特徴が変化している。
+**病理所見の検出が改善したか、480 epoch が必要かは未判定**。ベンチマークと照合する。
+スライドIDは生物学的な差も含み、η²_slide の低下だけで学習成功と断定しない。
+
+**成果物・検証**:
+
+- [レポートと図表](docs/analysis/dino_0028_cka_20261001/report.md)。
+  同フォルダに CKAのCSV、feature_health.csv、summary.json、抽出manifest、パッチメタデータを保存。
+- 抽出特徴・サムネイルは worktree の `outputs/evaluation_dino_0028/cka_20261001/`。
+  実行入口は `scripts/analysis/analyze_dino_epochs.py`、処理本体は
+  `lib/analysis/dino_epoch_analysis.py`。元の特徴抽出・CKAライブラリは変更していない。
+- CPU単体テスト3件成功: CKAの回転・平行移動・等方スケール不変性、
+  スライドオフセットの除去、均等サンプリングと画像/メタデータ対応・不足時の停止。
+  実データでは全5本の有限性、同一パッチ対応とハッシュ、CSV/summaryの一致を確認。
+- ベンチマークはユーザーが用意するため、以前の `toxpatho-uni` の照会は CKA の実行を妨げない。
+
+再実行例（別の output と report-dir を指定すること）:
+
+```bash
+OPENBLAS_NUM_THREADS=4 OMP_NUM_THREADS=4 MKL_NUM_THREADS=4 CUDA_VISIBLE_DEVICES=0 \
+/workspace/andre01/honzawa/01-toxpatho/wsi-ad/.venv/bin/python3 -u \
+scripts/analysis/analyze_dino_epochs.py \
+  --shard /workspace/andre01/honzawa/01-toxpatho/wsi-ad/data/shards/shard_0000.tar \
+  --checkpoint-root /workspace/andre01/honzawa/02-playground/toxpatho-ssl-comparison \
+  --output outputs/evaluation_dino_0028/cka_20261001_repeat \
+  --report-dir docs/analysis/dino_0028_cka_20261001_repeat --device cuda:0 --batch-size 64
+```
 
 ### 2026-10-01: DINO 0028 の評価準備（eval/model-evaluation）
 

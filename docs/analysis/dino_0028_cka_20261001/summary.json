@@ -1,0 +1,162 @@
+{
+  "source_manifest": "/workspace/andre01/honzawa/02-playground/toxpatho-ssl-comparison/.worktrees/model-evaluation/outputs/evaluation_dino_0028/cka_20261001/extract_manifest.json",
+  "sample_sha256": "1b67f79728598a6be3ddf4f81aaeff52a58d43038c1d3ab42fb93123cb8b9f8f",
+  "n_patches": 2000,
+  "n_slides": 100,
+  "names": [
+    "ep020",
+    "ep085",
+    "ep160",
+    "ep320",
+    "ep480"
+  ],
+  "cka_global": [
+    [
+      1.0,
+      0.886651250624182,
+      0.8679835430291385,
+      0.8338530831093812,
+      0.844485203086698
+    ],
+    [
+      0.886651250624182,
+      1.0,
+      0.9709805293810226,
+      0.9384052825459508,
+      0.8871665493453562
+    ],
+    [
+      0.8679835430291385,
+      0.9709805293810226,
+      1.0,
+      0.9543328973763978,
+      0.8984754325482289
+    ],
+    [
+      0.8338530831093812,
+      0.9384052825459508,
+      0.9543328973763978,
+      1.0,
+      0.9169966171523394
+    ],
+    [
+      0.844485203086698,
+      0.8871665493453562,
+      0.8984754325482289,
+      0.9169966171523394,
+      1.0
+    ]
+  ],
+  "cka_slide_centered": [
+    [
+      1.0,
+      0.9141192830136062,
+      0.8948726255064848,
+      0.8498930040221409,
+      0.7925261852985048
+    ],
+    [
+      0.9141192830136062,
+      1.0,
+      0.9682000762694257,
+      0.9255912737837849,
+      0.8559723950443783
+    ],
+    [
+      0.8948726255064848,
+      0.9682000762694257,
+      1.0,
+      0.9444821199082891,
+      0.8761548496002121
+    ],
+    [
+      0.8498930040221409,
+      0.9255912737837849,
+      0.9444821199082891,
+      1.0,
+      0.9092001042161739
+    ],
+    [
+      0.7925261852985048,
+      0.8559723950443783,
+      0.8761548496002121,
+      0.9092001042161739,
+      1.0
+    ]
+  ],
+  "feature_health": [
+    {
+      "epoch": 20,
+      "name": "ep020",
+      "centered_singular_effective_rank": 234.97884353919045,
+      "mean_feature_norm": 24.915508402395023,
+      "mean_dimension_std": 0.23843490896522326,
+      "mean_pairwise_cosine": 0.9020207341380937,
+      "eta2_slide": 0.5794522996276087,
+      "eta2_slide_permutation_mean": 0.0496247073079373,
+      "eta2_color": 0.2614767233520295,
+      "centered_top1_variance_fraction": 0.22912571421043437,
+      "nonfinite_values": 0
+    },
+    {
+      "epoch": 85,
+      "name": "ep085",
+      "centered_singular_effective_rank": 362.22846357736734,
+      "mean_feature_norm": 17.590693136941617,
+      "mean_dimension_std": 0.34693113774549494,
+      "mean_pairwise_cosine": 0.580394039675339,
+      "eta2_slide": 0.44481031658818493,
+      "eta2_slide_permutation_mean": 0.049450263236162806,
+      "eta2_color": 0.17913666083667798,
+      "centered_top1_variance_fraction": 0.17294941161997124,
+      "nonfinite_values": 0
+    },
+    {
+      "epoch": 160,
+      "name": "ep160",
+      "centered_singular_effective_rank": 382.0039999993586,
+      "mean_feature_norm": 31.13625512740674,
+      "mean_dimension_std": 0.6323441578697868,
+      "mean_pairwise_cosine": 0.5657578133045112,
+      "eta2_slide": 0.4341684091316041,
+      "eta2_slide_permutation_mean": 0.049443845807245326,
+      "eta2_color": 0.16797262167140092,
+      "centered_top1_variance_fraction": 0.149336076662087,
+      "nonfinite_values": 0
+    },
+    {
+      "epoch": 320,
+      "name": "ep320",
+      "centered_singular_effective_rank": 413.09463127166504,
+      "mean_feature_norm": 64.52828774582774,
+      "mean_dimension_std": 1.5155678321830137,
+      "mean_pairwise_cosine": 0.4675026354976325,
+      "eta2_slide": 0.4077487073481409,
+      "eta2_slide_permutation_mean": 0.04951330126400669,
+      "eta2_color": 0.1401093624451883,
+      "centered_top1_variance_fraction": 0.12247306523690567,
+      "nonfinite_values": 0
+    },
+    {
+      "epoch": 480,
+      "name": "ep480",
+      "centered_singular_effective_rank": 509.0892212435894,
+      "mean_feature_norm": 90.30029024914288,
+      "mean_dimension_std": 2.517140391739708,
+      "mean_pairwise_cosine": 0.35670266415600815,
+      "eta2_slide": 0.36241466771712394,
+      "eta2_slide_permutation_mean": 0.0495757860363992,
+      "eta2_color": 0.12770497975176348,
+      "centered_top1_variance_fraction": 0.09799003715837043,
+      "nonfinite_values": 0
+    }
+  ],
+  "pretraining_overlap": "unknown: original training memmap index unavailable",
+  "notes": [
+    "CKA describes feature similarity, not downstream quality.",
+    "Slide-centered CKA pools residuals after removing each slide mean.",
+    "Raw feature cosine can be dominated by the common mean.",
+    "Biased linear CKA: values depend on sample count and feature spectrum.",
+    "Prototype patches are exploratory and have no finding annotations."
+  ]
+}
