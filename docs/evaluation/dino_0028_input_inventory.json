@@ -1,0 +1,45 @@
+{
+  "experiment": "0028_20260917_dino_lr_half",
+  "checkpoint_root": "/workspace/andre01/honzawa/02-playground/toxpatho-ssl-comparison",
+  "evaluation_root": null,
+  "checkpoints": [
+    {
+      "epoch": 20,
+      "path": "/workspace/andre01/honzawa/02-playground/toxpatho-ssl-comparison/outputs/0028_20260917_dino_lr_half/model_ep20.pt",
+      "exists": true,
+      "bytes": 871667469
+    },
+    {
+      "epoch": 85,
+      "path": "/workspace/andre01/honzawa/02-playground/toxpatho-ssl-comparison/outputs/0028_20260917_dino_lr_half/model_ep85.pt",
+      "exists": true,
+      "bytes": 871667469
+    },
+    {
+      "epoch": 160,
+      "path": "/workspace/andre01/honzawa/02-playground/toxpatho-ssl-comparison/outputs/0028_20260917_dino_lr_half/model_ep160.pt",
+      "exists": true,
+      "bytes": 871667791
+    },
+    {
+      "epoch": 320,
+      "path": "/workspace/andre01/honzawa/02-playground/toxpatho-ssl-comparison/outputs/0028_20260917_dino_lr_half/model_ep320.pt",
+      "exists": true,
+      "bytes": 871667791
+    },
+    {
+      "epoch": 480,
+      "path": "/workspace/andre01/honzawa/02-playground/toxpatho-ssl-comparison/outputs/0028_20260917_dino_lr_half/model_ep480.pt",
+      "exists": true,
+      "bytes": 871667791
+    }
+  ],
+  "evaluation_assets": [],
+  "baseline_feature_candidates": [],
+  "missing_required_inputs": [
+    "evaluation_root (toxpatho-uni location is not yet known)"
+  ],
+  "files_present": false,
+  "evaluation_run": false,
+  "note": "File presence only: feature/label alignment, splits, normal reference fitting, baseline compatibility and environment have not been validated. Missing baseline features may be extracted after model weights and data are located."
+}

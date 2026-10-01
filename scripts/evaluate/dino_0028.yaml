@@ -1,0 +1,9 @@
+# 第1段階の対象。CKA は第1段階の結果を確認してから別に実施する。
+experiment: 0028_20260917_dino_lr_half
+checkpoint_dir: outputs/0028_20260917_dino_lr_half
+epochs: [20, 85, 160, 320, 480]
+backbone: student
+baselines: [vit_imagenet, uni]
+pooling: [slide_mean, top16]
+metrics: [auroc, average_precision]
+output_dir: outputs/evaluation_dino_0028

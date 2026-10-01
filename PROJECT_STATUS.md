@@ -13,7 +13,44 @@
 > 実行は向こう。**コミットに「実装済み・未実行」が含まれるのは想定どおり。**
 > 詳細は [CLAUDE.md](CLAUDE.md)。
 
-最終更新: 2026-09-30（Barlow Twins ViT-B/16 の準備: NaN 即停止を実装。学習は未投入）
+最終更新: 2026-10-01（評価用ブランチで DINO 0028 の評価順序・対象を固定。評価は未実行）
+
+### 2026-10-01: DINO 0028 の評価準備（eval/model-evaluation）
+
+ユーザー合意: **まず学習の良否を評価し、その後に CKA 等で学習自体を分析する。**
+Goal.yaml 方針2へ順序を反映し、詳細を
+[docs/evaluation/dino_0028_protocol.md](docs/evaluation/dino_0028_protocol.md) に保存した。
+
+- 対象: **ep20 / ep85 / ep160 / ep320 / ep480**。
+  第1段階は特徴健全性、所見別異常検出（AUROC / average precision）、
+  スライド・色依存、代表・類似画像。ImageNet-ViT / UNI と同じ画像・分割で比較する。
+  第2段階で epoch 間 CKA を下流性能の変化と対応づける。
+- 正常参照群の平均・共分散の推定にも適合が伴う。参照群と評価対照を分け、
+  epoch や集約法の選択には検証集合を使う。既存スコアは条件一致を確認してから使う。
+- 学習側の `260727_dev` を保ち、`.worktrees/model-evaluation` に別 worktree を作成済み。
+  **ホスト名を確認したところ現在は andre01**。上記の「ここ=Miyabi」は以前の実行環境の記録。
+  評価は andre01 で行う方針を維持する。
+- 元フォルダの outputs に **5本のチェックポイントが存在し、各約832MiB**。
+  worktree に outputs はコピーされないため、読み取り元は明示する。
+  [入力確認記録](docs/evaluation/dino_0028_input_inventory.json) を保存した。
+- `scripts/evaluate/dino_0028.yaml` と、読み取りのみの
+  `scripts/evaluate/check_dino_0028_inputs.py` を追加。
+  正常入力、空チェックポイント、評価リポジトリ未指定、重複epoch、不正相対パスの
+  CPU スモークを通過。評価用 YAML と更新した Goal の objective 部分の解析も確認。
+  Goal.yaml の既存 constraints 部分は YAML として解析できない記述があり、本作業では変更していない。
+
+**未実施・必要な入力**:
+
+- 記録にある `toxpatho-uni` の評価コード・manifest・比較特徴は、
+  `/workspace/andre01/honzawa/{01-toxpatho,02-playground}` では見つからず、場所をユーザーに照会中。
+  データ分割、所見の陰性定義、正常モデルと pooling の実装は資産が見つかってから照合する。
+- ホスト Python に torch / timm / h5py / scikit-learn が無い。
+  評価には別環境を選び、学習側の環境を変更しない。
+- **特徴抽出・下流評価・CKA は未実行。評価パイプライン本体の実装・接続も未完了。**
+  新しいジョブ投入、モデル学習、旧埋め込みの代用は行っていない。
+
+次の作業: `toxpatho-uni` の配置を確定し、ラベル・画像・分割・既存コードの整合性を確認する。
+第1段階の評価を接続して実行し、結果を確認してから CKA に進む。
 
 ### 2026-09-30: Barlow Twins (ViT-B/16) の準備 — NaN 即停止を実装・学習は未投入
 

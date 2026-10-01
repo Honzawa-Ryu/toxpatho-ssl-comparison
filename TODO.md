@@ -1,6 +1,6 @@
 # wsi-ad TODO / ロードマップ
 
-最終更新: 2026-09-30
+最終更新: 2026-10-01
 関連: [Goal.yaml](Goal.yaml) ・ [PROJECT_STATUS.md](PROJECT_STATUS.md) ・ [related_work.md](related_work.md)（先行研究サマリ）
 
 ---
@@ -23,6 +23,17 @@
 
 ## A. いま動いていること
 
+- [ ] **DINO 0028 の第1段階評価**（2026-10-01 ユーザー合意、eval/model-evaluation）
+      まず学習の良否を確認し、その後に CKA 等で学習自体を分析する。
+      対象は ep20 / ep85 / ep160 / ep320 / ep480。
+      特徴健全性、所見別 AUROC / average precision、スライド・色依存、代表・類似画像。
+      手順: [docs/evaluation/dino_0028_protocol.md](docs/evaluation/dino_0028_protocol.md)。
+      - [x] 評価順序・対象epochを設定化、5本のチェックポイントの配置確認、入力確認CLIのCPUスモーク。
+      - [ ] `toxpatho-uni` の配置確定（ユーザーに照会中）、所見・画像・分割・正常モデルの照合。
+      - [ ] andre01 の評価環境を確定し、第1段階を実行。**結果はまだ無い。**
+      - [ ] 第1段階の結果を確認した後に CKA（epoch間・スライド内）を実施。
+      この項目が現在の優先順。以下の以前の計画にある Miyabi 抽出や全96epoch評価を
+      そのまま実行せず、現時点の入力と5epochの計画に合わせる。
 - [x] **DINO ep85 の表現評価（幾何）**（HANDOFFタスク1）→ **完了 2026-09-04, exp 0027 / job 9672**
       全19チェックポイントを同一2,000パッチで測定。**480 epoch 完走の根拠は出なかった**
       （η²_slide が ep45 の 0.651 から ep85 の 0.639 までしか動かない）。
