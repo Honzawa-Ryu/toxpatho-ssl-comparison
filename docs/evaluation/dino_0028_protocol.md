@@ -1,8 +1,10 @@
 # DINO exp 0028 の評価手順
 
 2026-10-01 のユーザー合意: まず学習の良否を評価し、その後に CKA 等で学習自体を分析する。
-作業ブランチは `eval/model-evaluation`。学習側のフォルダ・出力は読み取りのみとし、
-評価結果は評価用 worktree 内の `outputs/evaluation_dino_0028/` に保存する。
+作業ブランチは `eval/model-evaluation`。学習コード・学習出力は読み取りのみとし、
+評価結果はユーザー指示により、元プロジェクト直下の `outputs/evaluation_dino_0028/` に保存する。
+今回の CKA 結果は `outputs/evaluation_dino_0028/cka_20261001/`。
+評価用 worktree の同名出力パスは、その保存先へのシンボリックリンクにしてある。
 
 同日の追加指示: ベンチマークはユーザーが用意し、その間に実行できる CKA 等を先に行う。
 旧 `wsi-ad/data/shards/` の画像を使った結果は探索的な表現解析として区別する。

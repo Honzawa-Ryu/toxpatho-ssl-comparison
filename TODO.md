@@ -33,7 +33,7 @@
       - [ ] andre01 の評価環境を確定し、第1段階を実行。**結果はまだ無い。**
       - [x] **同日の追加指示で CKA を先行実行**。旧 shard の100スライド×20枚で5epochを比較。
         全体CKAとスライド平均を除いたCKA、特徴健全性、η²、代表パッチを生成。
-        [レポート](docs/analysis/dino_0028_cka_20261001/report.md)。学習WSIとの重複は未確認。
+        [レポート](/workspace/andre01/honzawa/02-playground/toxpatho-ssl-comparison/outputs/evaluation_dino_0028/cka_20261001/report.md)。学習WSIとの重複は未確認。
       - [ ] ベンチマーク結果と今回の CKA・特徴推移を対応づけて解釈する。
       この項目が現在の優先順。以下の以前の計画にある Miyabi 抽出や全96epoch評価を
       そのまま実行せず、現時点の入力と5epochの計画に合わせる。

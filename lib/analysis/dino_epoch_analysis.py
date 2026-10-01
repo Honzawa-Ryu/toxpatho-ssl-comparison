@@ -263,8 +263,9 @@ def analyze(output, report_dir):
                          "Biased linear CKA: values depend on sample count and feature spectrum.",
                          "Prototype patches are exploratory and have no finding annotations."]}
     (report_dir / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
-    shutil.copyfile(output / "extract_manifest.json", report_dir / "extract_manifest.json")
-    shutil.copyfile(output / "patches_meta.json", report_dir / "patches_meta.json")
+    if output.resolve() != report_dir.resolve():
+        shutil.copyfile(output / "extract_manifest.json", report_dir / "extract_manifest.json")
+        shutil.copyfile(output / "patches_meta.json", report_dir / "patches_meta.json")
     fig, axes = plt.subplots(1, 2, figsize=(10, 4))
     axes[0].plot(table.epoch, table.centered_singular_effective_rank, marker="o")
     axes[0].set(xlabel="Epoch", ylabel="Centered singular effective rank")

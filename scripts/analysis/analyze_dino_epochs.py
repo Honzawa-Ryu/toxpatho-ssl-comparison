@@ -18,7 +18,8 @@ def main():
     parser.add_argument("--checkpoint-root", type=Path)
     parser.add_argument("--config", type=Path, default=ROOT / "scripts/evaluate/dino_0028.yaml")
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--report-dir", type=Path, required=True)
+    parser.add_argument("--report-dir", type=Path,
+                        help="Report destination; defaults to --output")
     parser.add_argument("--scan-patches", type=int, default=5000)
     parser.add_argument("--per-slide", type=int, default=20)
     parser.add_argument("--slides", type=int, default=100)
@@ -39,8 +40,9 @@ def main():
         extract(args.shard, args.checkpoint_root, epochs, args.output,
                 args.scan_patches, args.per_slide, args.slides,
                 args.batch_size, args.device)
-    summary = analyze(args.output, args.report_dir)
-    print(f"Complete: {summary['n_patches']} patches; report={args.report_dir / 'report.md'}")
+    report_dir = args.report_dir or args.output
+    summary = analyze(args.output, report_dir)
+    print(f"Complete: {summary['n_patches']} patches; report={report_dir / 'report.md'}")
 
 
 if __name__ == "__main__":

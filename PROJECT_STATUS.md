@@ -15,6 +15,16 @@
 
 最終更新: 2026-10-01（DINO 0028 の CKA・特徴解析を andre01 で実行。所見ベンチマークは準備待ち）
 
+### 2026-10-01: 解析結果を outputs に配置
+
+ユーザー指示により、レポート・図表・数値・抽出特徴・入力メタデータの22ファイルを
+元プロジェクト直下の `outputs/evaluation_dino_0028/cka_20261001/` にまとめた。
+移動前後の各ファイルの SHA256 一致を確認。
+評価用 worktree の同名出力パスからはシンボリックリンクで参照できる。
+生成物は docs 配下の Git 管理から外し、実行コードと手順・参照リンクを残す。
+CLI の `--report-dir` は省略時に `--output` と同じフォルダを使うように変更した。
+特徴の再抽出はせず、移動済みの特徴から解析を再実行して同一フォルダへの出力を確認した。
+
 ### 2026-10-01: ベンチマーク準備の間に CKA・特徴解析を先行実行
 
 ユーザーの追加指示: **ベンチマークはユーザーが用意する。その間に今できる CKA 等を実行する。**
@@ -58,7 +68,7 @@ Goal.yaml と評価手順へ先行実行の扱いを追記。所見別の下流�
 
 **成果物・検証**:
 
-- [レポートと図表](docs/analysis/dino_0028_cka_20261001/report.md)。
+- [レポートと図表](/workspace/andre01/honzawa/02-playground/toxpatho-ssl-comparison/outputs/evaluation_dino_0028/cka_20261001/report.md)。
   同フォルダに CKAのCSV、feature_health.csv、summary.json、抽出manifest、パッチメタデータを保存。
 - 抽出特徴・サムネイルは worktree の `outputs/evaluation_dino_0028/cka_20261001/`。
   実行入口は `scripts/analysis/analyze_dino_epochs.py`、処理本体は
@@ -68,7 +78,7 @@ Goal.yaml と評価手順へ先行実行の扱いを追記。所見別の下流�
   実データでは全5本の有限性、同一パッチ対応とハッシュ、CSV/summaryの一致を確認。
 - ベンチマークはユーザーが用意するため、以前の `toxpatho-uni` の照会は CKA の実行を妨げない。
 
-再実行例（別の output と report-dir を指定すること）:
+再実行例（別の output を指定すること。レポートも同じフォルダに保存される）:
 
 ```bash
 OPENBLAS_NUM_THREADS=4 OMP_NUM_THREADS=4 MKL_NUM_THREADS=4 CUDA_VISIBLE_DEVICES=0 \
@@ -76,8 +86,8 @@ OPENBLAS_NUM_THREADS=4 OMP_NUM_THREADS=4 MKL_NUM_THREADS=4 CUDA_VISIBLE_DEVICES=
 scripts/analysis/analyze_dino_epochs.py \
   --shard /workspace/andre01/honzawa/01-toxpatho/wsi-ad/data/shards/shard_0000.tar \
   --checkpoint-root /workspace/andre01/honzawa/02-playground/toxpatho-ssl-comparison \
-  --output outputs/evaluation_dino_0028/cka_20261001_repeat \
-  --report-dir docs/analysis/dino_0028_cka_20261001_repeat --device cuda:0 --batch-size 64
+  --output /workspace/andre01/honzawa/02-playground/toxpatho-ssl-comparison/outputs/evaluation_dino_0028/cka_20261001_repeat \
+  --device cuda:0 --batch-size 64
 ```
 
 ### 2026-10-01: DINO 0028 の評価準備（eval/model-evaluation）
