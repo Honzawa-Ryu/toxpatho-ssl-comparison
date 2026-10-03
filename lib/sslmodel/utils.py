@@ -493,11 +493,11 @@ class CollapseMonitor:
         self.patience = patience
         self.loss_ceiling = float(np.log(out_dim)) if out_dim and out_dim > 1 else None
         self.loss_ratio = loss_ratio
-        # None = uniformity 判定を無効にする。BT のように損失がバッチ平均を引いてから
-        # 相関を取る手法では、投影出力の各次元の共通オフセットが自由なので、健全でも
-        # 正規化後のベクトルがほぼ平行(uniformity ≈ 0)になりうる。DINO の健全時でさえ
-        # -0.006 (0028) で、out_dim を持たない手法では損失天井による絞り込みも効かない
-        # (secondary_enabled が常に True)ため、有効のままだと最初の判定で健全なランを誤停止する。
+        # None = uniformity 判定を無効にする。out_dim を持たない手法では損失天井による絞り込みが
+        # 効かず(secondary_enabled が常に True)、DINO の健全時の uniformity が -0.006 (0028) と
+        # 0 に近い前例があるため、BT でも誤停止を警戒して無効化できるようにした。
+        # ⚠️ ただし BT の実測(0029 ep5〜60)は -2.9〜-3.4 で健全な値であり、この警戒は杞憂だった。
+        # BT では有効のままでよい(完全崩壊の検知に使える)。
         self.uniformity_threshold = uniformity_threshold
         self.secondary_ratio = secondary_ratio
         # 損失の持続的な跳ね返り(発散)判定。0 = 無効(既定。従来の実験の挙動は変えない)。

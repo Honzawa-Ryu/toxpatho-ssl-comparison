@@ -77,7 +77,9 @@
       **exp 0029 を定義**（`experiments/0029_20260930_bt_vitb16_step_matched/`: 8ノード・bs 2048・**1600 epoch = 論文と同じ約62.5万 step**、
       `--collapse_early_stop` 付き、preflight.sh 通過済み）。見積り 350〜560 ノード時間・48h 枠で 2 本。
       BT 用の崩壊検知（uniformity 無効化・損失の跳ね返り判定）を追加済み。論文との変更点: `docs/bt_vitb16_vs_paper.md`。
-      **2026-10-01 投入済み（job 3463160.opbs, 8ノード・予約384トークン）。** 経過確認は PROJECT_STATUS「🚀 exp 0029 を投入した」。
+      **2026-10-01 に 0029 を投入 → 2026-10-02 ep65 で NaN となり検知・停止（約20ノード時間）。原因は未特定。**
+      詳細は PROJECT_STATUS「💥 exp 0029 は ep65 で NaN」。次は原因の切り分け（仮説 H1=bf16 の損失 / H2=LARS 高原）。
+      未: step 単位の NaN テレメトリ（最初の非有限 step、z の最小 std）と fp32 損失オプションの実装、再実行の判断。
       未: 初回の損失曲線から跳ね返り判定の比率（現状 2.0・未較正）を見直す。1 epoch の実測時間で見積りを更新する。
       `0015_20260806_paper_barlowtwins_vitb16` は未投入のまま残す（旧定義）。
       ⚠️ ViT×BT の先行報告は見つからず、LARS が ViT で安定かは未検証。詳細は PROJECT_STATUS。
