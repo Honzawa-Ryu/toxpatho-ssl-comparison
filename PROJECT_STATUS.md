@@ -179,7 +179,15 @@ epoch=63（0始まり）→ 再開すると次は Epoch 65。lr は 1.597 / 0.03
 - 再現した → 最初の非有限 step の直前を見る（z の std/比が先に壊れれば H1、grad_norm が先に跳ねれば H2）。
 - 再現しなかった（10〜15 epoch 健全）→ 確率的な事象。対処は別途検討。
 - 8ノード・walltime 1h（予約 8 ノード時間）。NaN が出れば即停止。⚠️ 起動時の 141GB コピー時間は未計測で、
-  長ければ走れる epoch が減る。**qsub はユーザー承認後。**
+  長ければ走れる epoch が減る。
+- 🚀 **2026-10-05 にユーザー承認のうえ投入した（job 3486432.opbs, commit d1ffb07）。** 確認コマンド:
+  ```bash
+  L=logs/0030_20261005_bt_diag_resume_ep64/3486432.opbs.OU
+  grep -a -E "Resumed from state.pt|BT criterion restored" $L      # 期待: epoch 63 -> continue at epoch 64 / fp32=False, collect_stats=True
+  grep -a "Epoch: " $L | uniq | tail                               # 経過
+  grep -a -E "Non-finite|Diverged|Collapse detected" $L            # 停止したか
+  ls outputs/0030_20261005_bt_diag_resume_ep64/bt_steps_ep*.jsonl   # step テレメトリ
+  ```
 - fp32 にしないのは、再現しなくなっても原因の特定にならないため（まず再現を見る）。
 
 ### 🚀 exp 0029 を投入した（2026-10-01, **job 3463160.opbs**）
