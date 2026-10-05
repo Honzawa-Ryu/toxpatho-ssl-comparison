@@ -6,6 +6,7 @@
 ガードをここに入れる（REFACTOR_PLAN.md §6-4）。
 
 """
+import math
 import os
 import time
 
@@ -19,6 +20,7 @@ from lib.trainer import distributed
 from lib.trainer.context import RunContext
 from lib.trainer.data import prepare_data
 from lib.trainer.clip_logging import write_epoch as write_clip_epoch
+from lib.trainer.bt_telemetry import write_epoch as write_bt_epoch
 
 
 # train epoch
@@ -30,6 +32,16 @@ def train_epoch(ctx: RunContext, model, data_loader, criterion, optimizer, epoch
     train_batch_loss = []
     grad_norms = []
     clip_norms = [] if clip_grad > 0 and distributed.is_main_process() else None
+    # Barlow Twins の step 単位テレメトリ(--bt_step_log)。rank0 のローカルバッチの統計を貯め、
+    # epoch 末に1回だけ host へ転送して書く(bt_telemetry.py)。学習の挙動には影響しない。
+    bt_stats = [] if getattr(criterion, 'collect_stats', False) and distributed.is_main_process() else None
+    # --collapse_early_stop のときは、最初の非有限の損失で epoch を打ち切る。どのみち epoch 末に
+    # check_loss_finite が全 rank で停止するが、残りの step は NaN の重みで空回りするだけで、
+    # 打ち切れば最大 1 epoch 分の計算を節約でき、テレメトリも最初の NaN の直後で止まる。
+    # loss_value は all_reduce_mean 済みで全 rank 同一なので、全 rank が同じ step で抜ける
+    # (片 rank だけ抜けると他 rank が DDP の集合通信で hang する)。
+    stop_on_nonfinite = getattr(ctx.args, 'collapse_early_stop', False)
+    first_nonfinite = None
     # DINOのteacher momentum/温度スケジュールはstep単位で更新する(論文と同じ粒度)。
     # 通算stepの純関数として計算するのでresume時も正しい値になる。
     niter_per_ep = len(data_loader)
@@ -44,6 +56,8 @@ def train_epoch(ctx: RunContext, model, data_loader, criterion, optimizer, epoch
         optimizer.zero_grad(set_to_none=True)
         with torch.amp.autocast(device_type="cuda", dtype=torch.bfloat16):
             loss = ssl_class.calc_loss(model, data, criterion)
+        if bt_stats is not None and getattr(criterion, 'last_stats', None) is not None:
+            bt_stats.append(criterion.last_stats)
         loss.backward()
         # total grad L2 norm with a SINGLE device sync (old code did .item() per
         # parameter -> ~150 GPU->CPU syncs/iter, serializing the step). Identical value.
@@ -82,6 +96,17 @@ def train_epoch(ctx: RunContext, model, data_loader, criterion, optimizer, epoch
         # なってしまうため、マルチGPU時は全rank平均に揃える(no-op when world_size==1)。
         loss_value = distributed.all_reduce_mean(loss.detach().clone()).item()
         train_batch_loss.append(loss_value)
+        if stop_on_nonfinite and not math.isfinite(loss_value):
+            first_nonfinite = i
+            ctx.logger.logger.warning(
+                f'Non-finite loss at Epoch {epoch + 1} step {i}/{niter_per_ep} (loss={loss_value}); '
+                f'stopping the epoch early')
+            break
+    if bt_stats is not None:
+        try:
+            write_bt_epoch(ctx.dir_name, epoch + 1, train_batch_loss, grad_norms, bt_stats, first_nonfinite)
+        except OSError as exc:
+            ctx.logger.logger.warning(f'BT step telemetry could not be saved: {exc}')
     if clip_norms is not None:
         try:
             write_clip_epoch(ctx.dir_name, epoch + 1, clip_grad, clip_norms, grad_norms)

@@ -317,6 +317,47 @@ _check("check_loss_rebound は state.pt 保存より前", i_rebound < i_reb.inde
 _check("check_loss_rebound は early_stopping() より前", i_rebound < i_reb.index("early_stopping(val_epoch_loss"))
 
 
+# =====================================================
+# 5. BT の fp32 ヘッド / step テレメトリの配線（2026-10-05, 0029 の NaN 対応）
+#    torch が要る挙動は lib/sslmodel/tests/test_barlowtwins_fp32.py（コンテナ内）が担当。
+#    ここでは「配線を忘れると黙って効かなくなる」箇所をソースで固定する。
+# =====================================================
+print("BT fp32 head / step telemetry wiring")
+sslutils_src = open(os.path.join(REPO_ROOT, "lib/sslmodel/sslutils.py"), encoding="utf-8").read()
+for flag in ("--bt_fp32_head", "--bt_step_log"):
+    _check(f"CLI {flag} が定義されている", f"add_argument('{flag}'" in entry_src)
+_check("model.py が fp32_head を BT の prepare_model へ渡している",
+       'model_kwargs["fp32_head"] = True' in model_src)
+_check("model.py が collect_stats を criterion へ設定している",
+       "criterion.collect_stats = args.bt_step_log" in model_src)
+_check("sslutils が fp32_head を モデルと損失の両方へ渡している(片方だけでは桁落ちが残る)",
+       "fp32_head=fp32_head)" in sslutils_src and "fp32=fp32_head)" in sslutils_src)
+# 旧 state.pt から復元した criterion は pickle 時点の属性しか持たない。再開時に CLI の値を
+# 設定し直さないと、--bt_fp32_head を付けても損失が bf16 のまま走る（診断ランで実際に踏む経路）。
+i_restore = entry_src.index("criterion = state['criterion']")
+i_reapply = entry_src.index("criterion.fp32 = args.bt_fp32_head")
+_check("resume 経路で復元後の criterion に fp32 / collect_stats を設定し直す", i_reapply > i_restore)
+_check("resume 経路で collect_stats も設定し直す", "criterion.collect_stats = args.bt_step_log" in entry_src)
+bt_src = open(os.path.join(REPO_ROOT, "lib/sslmodel/models/barlowtwins.py"), encoding="utf-8").read()
+for attr in ("    fp32 = False", "    collect_stats = False", "    last_stats = None"):
+    _check(f"旧 pickle 互換のクラス属性 `{attr.strip()}` がある", attr in bt_src)
+# 非有限の損失で epoch を打ち切る処理は、loss_value を append した直後・DDP 集合通信の前にあること
+i_append = loop_src.index("train_batch_loss.append(loss_value)")
+i_break = loop_src.index("first_nonfinite = i")
+_check("非有限の損失での打ち切りは loss_value の append 直後（全 rank 同一の値で判定）",
+       0 < i_break - i_append < 300)
+_check("打ち切りは --collapse_early_stop のときだけ（既存の実験の挙動は変えない）",
+       "stop_on_nonfinite = getattr(ctx.args, 'collapse_early_stop', False)" in loop_src)
+_check("テレメトリは rank0 だけが貯める",
+       "getattr(criterion, 'collect_stats', False) and distributed.is_main_process()" in loop_src)
+
+i_es = entry_src.index("early_stopping = state['early_stopping']")
+_check("resume 経路で復元した EarlyStopping の path を今回の DIR_NAME に合わせ直す(元のランの成果物を上書きしない)",
+       entry_src.index("early_stopping.path = f'{DIR_NAME}/checkpoint.pt'") > i_es)
+_check("resume 経路で復元した EarlyStopping の save_enabled を rank0 限定に合わせ直す(全rankの同時書き込みを防ぐ)",
+       entry_src.index("early_stopping.save_enabled = distributed.is_main_process()") > i_es)
+
+
 print()
 print(f"passed: {PASSES}, failed: {FAILURES}")
 sys.exit(1 if FAILURES else 0)

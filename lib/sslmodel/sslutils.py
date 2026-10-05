@@ -18,11 +18,15 @@ class BarlowTwins:
     def __init__(self, DEVICE="cpu"):
         self.DEVICE=DEVICE
 
-    def prepare_model(self, backbone, head_size:int=512, pred_dim=128, projection_dim=512):
-        model = barlowtwins.BarlowTwins(backbone, head_size=[head_size, projection_dim, pred_dim])
+    def prepare_model(self, backbone, head_size:int=512, pred_dim=128, projection_dim=512, fp32_head:bool=False):
+        model = barlowtwins.BarlowTwins(backbone, head_size=[head_size, projection_dim, pred_dim],
+                                        fp32_head=fp32_head)
         # マルチGPU時はcross-correlation行列をGPU間でall_reduceする(有効バッチサイズを
         # 正しく増やすために必須。Goal.yaml 2026-08-03)。単一GPUではFalseのまま=従来通り。
-        criterion = barlowtwins.BarlowTwinsLoss(gather_distributed=distributed.world_size() > 1)
+        # fp32_head=True のときは損失も fp32 で計算する(ヘッドだけ fp32 でも、損失が bf16 の
+        # ままなら標準化の桁落ちは残るため、常に対で切り替える)。
+        criterion = barlowtwins.BarlowTwinsLoss(gather_distributed=distributed.world_size() > 1,
+                                                fp32=fp32_head)
         model.to(self.DEVICE)
         return model, criterion
 
