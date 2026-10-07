@@ -22,6 +22,8 @@ from pathlib import Path
 
 COLS = ["loss", "grad_norm", "z_std_min", "n_zero_std", "z_mean_abs_max", "z_ratio_max",
         "c_diag_mean", "on_diag", "off_diag"]
+# グループ別 grad_norm(2026-10-07 以降のログにだけある。lib/trainer/bt_telemetry.py GradGroupProbe)
+GROUP_COLS = ["gn_lars", "gn_raw", "gn_backbone", "gn_head"]
 
 
 def load(directory, epoch):
@@ -29,6 +31,11 @@ def load(directory, epoch):
     if not files:
         raise SystemExit(f"bt_steps_ep{epoch:04d}_*.jsonl が {directory} に無い")
     return [json.loads(line) for line in open(files[-1])]   # 再開した試行が複数あれば最新
+
+
+def load_names(directory):
+    path = Path(directory) / "bt_param_names.json"
+    return json.loads(path.read_text()) if path.exists() else None
 
 
 def finite(rows, key):
@@ -73,6 +80,34 @@ def main():
     print("step  " + " ".join(f"{c[:10]:>10}" for c in COLS))
     for r in rows[lo: lo + a.window + 1]:
         print(f"{r['step']:4d}  " + " ".join(fmt(r.get(c)) for c in COLS))
+    if any("gn_raw" in r for r in rows):
+        # どのグループが先に跳ねたか: 各グループが基準の最大値の gn_factor 倍を初めて超えた step。
+        # gn_lars(重み, LARS 正規化あり)と gn_raw(bias/LN, 生勾配×lr_bias)の順序が H2' の判定。
+        names = load_names(a.directory)
+        print(f"\n== グループ別 grad_norm (ep{a.epoch} step {lo}〜{lo + a.window}) ==")
+        print("step  " + " ".join(f"{c:>10}" for c in GROUP_COLS) + "   top1 (norm)  top2  top3")
+        for r in rows[lo: lo + a.window + 1]:
+            tops = []
+            for j in (1, 2, 3):
+                idx, nv = r.get(f"top{j}_idx"), r.get(f"top{j}_norm")
+                if isinstance(idx, (int, float)) and names:
+                    tops.append(f"{names[int(idx)]}({nv:.3g})")
+                else:
+                    tops.append(f"{idx}({nv})")
+            print(f"{r['step']:4d}  " + " ".join(fmt(r.get(c)) for c in GROUP_COLS) + "   " + "  ".join(tops))
+        print()
+        for c in GROUP_COLS:
+            bv = finite(base, c)
+            if not bv:
+                continue
+            lim = a.gn_factor * max(bv)
+            onset = next((i for i, r in enumerate(rows) if isinstance(r.get(c), (int, float)) and r[c] > lim), None)
+            print(f"{c:12s} 基準 ep{base_ep} max {max(bv):8.3g} -> {lim:.3g} を初めて超えた step: {onset}")
+        if names:
+            from collections import Counter
+            cnt = Counter(names[int(r["top1_idx"])] for r in rows[lo: lo + a.window + 1]
+                          if isinstance(r.get("top1_idx"), (int, float)))
+            print("起点前後で top1 になったテンソル: " + ", ".join(f"{n}×{k}" for n, k in cnt.most_common(5)))
     pre = rows[:min(cands)]
     print(f"\n起点より前（step 0〜{min(cands) - 1}）: grad_norm 中央値 {st.median(finite(pre, 'grad_norm')):.3g} "
           f"最大 {max(finite(pre, 'grad_norm')):.3g}; loss 中央値 {st.median(finite(pre, 'loss')):.4g}")

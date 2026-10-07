@@ -20,7 +20,7 @@ from lib.trainer import distributed
 from lib.trainer.context import RunContext
 from lib.trainer.data import prepare_data
 from lib.trainer.clip_logging import write_epoch as write_clip_epoch
-from lib.trainer.bt_telemetry import write_epoch as write_bt_epoch
+from lib.trainer.bt_telemetry import write_epoch as write_bt_epoch, GradGroupProbe, write_param_names
 
 
 # train epoch
@@ -35,6 +35,9 @@ def train_epoch(ctx: RunContext, model, data_loader, criterion, optimizer, epoch
     # Barlow Twins の step 単位テレメトリ(--bt_step_log)。rank0 のローカルバッチの統計を貯め、
     # epoch 末に1回だけ host へ転送して書く(bt_telemetry.py)。学習の挙動には影響しない。
     bt_stats = [] if getattr(criterion, 'collect_stats', False) and distributed.is_main_process() else None
+    # グループ別 grad_norm(重み/bias・LN, backbone/head)と上位テンソル。0030 で「起点は勾配の急増」
+    # まで絞れたが、どのグループが先に跳ねたかが合計ノルムからは分からなかった(bt_telemetry.py)。
+    bt_probe = GradGroupProbe(model) if bt_stats is not None else None
     # --collapse_early_stop のときは、最初の非有限の損失で epoch を打ち切る。どのみち epoch 末に
     # check_loss_finite が全 rank で停止するが、残りの step は NaN の重みで空回りするだけで、
     # 打ち切れば最大 1 epoch 分の計算を節約でき、テレメトリも最初の NaN の直後で止まる。
@@ -63,10 +66,13 @@ def train_epoch(ctx: RunContext, model, data_loader, criterion, optimizer, epoch
         # parameter -> ~150 GPU->CPU syncs/iter, serializing the step). Identical value.
         # クリッピングより前に測る(公式DINOと同じ)ので、ログのgrad_normは常に
         # 「クリップ前」の値=スパイク検出用の生の指標のまま。
-        grads = [p.grad.detach() for p in model.parameters() if p.grad is not None]
+        grad_params = [p for p in model.parameters() if p.grad is not None]
+        grads = [p.grad.detach() for p in grad_params]
         if grads:
             per_param_norms = torch._foreach_norm(grads)
             grad_norm = torch.norm(torch.stack(per_param_norms)).item()
+            if bt_probe is not None:
+                bt_probe.record(grad_params, per_param_norms)
             if clip_norms is not None:
                 clip_norms.append(torch.stack(per_param_norms).detach())
             if clip_grad > 0:
@@ -104,7 +110,9 @@ def train_epoch(ctx: RunContext, model, data_loader, criterion, optimizer, epoch
             break
     if bt_stats is not None:
         try:
-            write_bt_epoch(ctx.dir_name, epoch + 1, train_batch_loss, grad_norms, bt_stats, first_nonfinite)
+            write_param_names(ctx.dir_name, bt_probe.names)
+            write_bt_epoch(ctx.dir_name, epoch + 1, train_batch_loss, grad_norms, bt_stats, first_nonfinite,
+                           groups=bt_probe.rows())
         except OSError as exc:
             ctx.logger.logger.warning(f'BT step telemetry could not be saved: {exc}')
     if clip_norms is not None:

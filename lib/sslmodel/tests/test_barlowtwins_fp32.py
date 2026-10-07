@@ -20,6 +20,7 @@ Run:
     python -m unittest lib.sslmodel.tests.test_barlowtwins_fp32
 """
 import json
+import math
 import tempfile
 import unittest
 from pathlib import Path
@@ -199,6 +200,60 @@ class TestTelemetryFile(unittest.TestCase):
         self.assertTrue(rows[1]["first_nonfinite"])
         self.assertEqual(rows[1]["n_zero_std"], 4.0)
         self.assertNotIn("first_nonfinite", rows[0])
+
+
+class TestGradGroupProbe(unittest.TestCase):
+    """グループ別 grad_norm(2026-10-07)。合計ノルムと一致し、4 分割が正しいこと。"""
+
+    def _model(self):
+        return torch.nn.ModuleDict({
+            "backbone": torch.nn.Sequential(torch.nn.Linear(4, 3), torch.nn.LayerNorm(3)),
+            "projection_head": torch.nn.Linear(3, 2),
+        })
+
+    def test_groups_match_total_norm_and_names(self):
+        model = self._model()
+        out = model["projection_head"](model["backbone"](torch.randn(5, 4)))
+        out.sum().backward()
+        probe = bt_telemetry.GradGroupProbe(model)
+        params = [p for p in model.parameters() if p.grad is not None]
+        norms = torch._foreach_norm([p.grad for p in params])
+        probe.record(params, norms)
+        row = dict(zip(bt_telemetry.GROUP_NAMES, probe.rows()[0]))
+        total = torch.norm(torch.stack(norms)).item()
+        self.assertAlmostEqual(math.hypot(row["gn_lars"], row["gn_raw"]), total, places=5)
+        self.assertAlmostEqual(math.hypot(row["gn_backbone"], row["gn_head"]), total, places=5)
+        raw = math.sqrt(sum(p.grad.norm().item() ** 2 for p in params if p.ndim <= 1))
+        self.assertAlmostEqual(row["gn_raw"], raw, places=5)
+        head = math.sqrt(sum(p.grad.norm().item() ** 2 for p in model["projection_head"].parameters()))
+        self.assertAlmostEqual(row["gn_head"], head, places=5)
+        top1 = max(range(len(params)), key=lambda i: norms[i].item())
+        self.assertEqual(int(row["top1_idx"]), top1)
+        self.assertEqual(probe.names[top1], [n for n, _ in model.named_parameters()][top1])
+        self.assertGreaterEqual(row["top1_norm"], row["top2_norm"])
+        self.assertGreaterEqual(row["top2_norm"], row["top3_norm"])
+
+    def test_module_prefix_is_stripped_and_mismatch_gives_nan(self):
+        model = self._model()
+        wrapped = torch.nn.ModuleDict({"module": model})   # DDP の "module." 接頭辞を模す
+        probe = bt_telemetry.GradGroupProbe(wrapped)
+        self.assertTrue(all(not n.startswith("module.") for n in probe.names))
+        self.assertTrue(probe.names[0].startswith("backbone."))
+        params = list(model.parameters())[:2]               # 集合が食い違う
+        probe.record(params, [torch.tensor(1.0), torch.tensor(2.0)])
+        self.assertTrue(all(math.isnan(v) for v in probe.rows()[0]))
+
+    def test_write_epoch_with_groups(self):
+        groups = [[1.0, 2.0, 3.0, 4.0, 5, 0.9, 6, 0.8, 7, 0.7]]
+        with tempfile.TemporaryDirectory() as d:
+            bt_telemetry.write_param_names(d, ["a", "b"])
+            bt_telemetry.write_param_names(d, ["zzz"])     # 2 回目は上書きしない
+            bt_telemetry.write_epoch(d, 66, [1.0, 2.0], [0.1, 0.2], [], groups=groups)
+            rows = [json.loads(l) for l in next(Path(d).glob("bt_steps_ep0066_*.jsonl")).read_text().splitlines()]
+            self.assertEqual(json.loads((Path(d) / "bt_param_names.json").read_text()), ["a", "b"])
+        self.assertEqual(rows[0]["gn_raw"], 2.0)
+        self.assertEqual(rows[0]["top1_idx"], 5)
+        self.assertNotIn("gn_raw", rows[1], "groups が無い step には列を足さない")
 
 
 if __name__ == "__main__":

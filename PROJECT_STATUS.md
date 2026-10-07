@@ -13,7 +13,7 @@
 > 実行は向こう。**コミットに「実装済み・未実行」が含まれるのは想定どおり。**
 > 詳細は [CLAUDE.md](CLAUDE.md)。
 
-最終更新: 2026-10-05（Barlow Twins: **診断ラン 0030 で NaN を再現し、起点を step 単位で特定**。bf16 の桁落ちではなく、勾配の急増による数 step の発散。約1ノード時間）
+最終更新: 2026-10-07（Barlow Twins: 0030 の起点をさらに絞るため**グループ別 grad_norm のテレメトリ**を実装し、診断ラン 0031 を定義。preflight 通過・qsub は未実施）
 
 ### 2026-09-30: Barlow Twins (ViT-B/16) の準備 — NaN 即停止を実装・学習は未投入
 
@@ -133,6 +133,31 @@ grad_norm の増大（ランプ）は無く、**健全な曲線から突然 NaN 
 - `val_loss` は 9000〜10000 で train（272）の約33倍。eval モードの BN 統計とバッチ方向の正規化が噛み合わない
   ためと思われ、**BT では val_loss が比較に使えない**。`checkpoint.pt`（最良 val_loss の保存）は
   このノイズで選ばれるので、停止時の復元元としては ep64 の `state.pt` のほうが信頼できる。
+
+### 🔬 0031: どのグループが先に跳ねるかを測る診断ラン（2026-10-07 定義、未投入）
+
+0030 で「起点は勾配の急増」まで絞れたが、合計ノルムしか無く **H2'（bias/LN の生勾配グループの正の
+フィードバック）を検証できなかった**。そこで `--bt_step_log` のテレメトリに次を足した（`lib/trainer/bt_telemetry.py`
+`GradGroupProbe`。device 上の演算のみで `.item()` の同期は増えない。学習には影響しない）:
+
+| 列 | 中身 |
+|---|---|
+| `gn_lars` / `gn_raw` | ndim>1（LARS 適応あり）/ ndim<=1（bias・LayerNorm・BN, 生勾配×lr_bias）の勾配 L2 ノルム |
+| `gn_backbone` / `gn_head` | `backbone.` 以下 / projection_head の勾配 L2 ノルム |
+| `top{1,2,3}_idx` / `_norm` | パラメータ毎ノルムの上位3つ。名前は `bt_param_names.json`（rank0 が1回書く） |
+
+`hypot(gn_lars, gn_raw) = hypot(gn_backbone, gn_head) = grad_norm` が成り立つ（単体テストで固定）。
+`scripts/analysis/bt_step_report.py` が列を見つけるとグループ別の表・各グループが基準の2倍を初めて超えた step・
+起点前後で top1 になったテンソルを出す。
+
+**判定**: `gn_raw` が `gn_lars` より先に（または同時に）跳ねて top1 が bias/LN なら H2' を支持 → 対策は `--lr_bias`
+の引き下げか `--clip_grad`（生勾配グループに効く）。`gn_lars`・特に projection_head の最終層が先なら LARS の
+trust ratio か頭側の問題で、対策はピーク lr の引き下げ。
+
+実験定義: `experiments/0031_20261007_bt_diag_gradgroups_ep64/`（0030 と同じ ep64 から再開・bf16・8ノード・walltime 1h。
+0030 からの変更は出力先と名前だけ）。preflight 通過（state.pt コピー済み・`.venv` 健全・配線あり）。
+検証: `tests/test_collapse_guards.py` 74 項目、コンテナ内 `lib/sslmodel/tests/test_barlowtwins_fp32.py` 20 件、
+実モデル（小ヘッド・B=4）で 2 step 回して jsonl に列が出ることを確認。**投入は承認待ち。**
 
 ### 💥 0030 で NaN を再現し、起点を特定した（2026-10-05 12:05〜12:09, job 3486432）
 

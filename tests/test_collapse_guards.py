@@ -341,6 +341,13 @@ _check("resume 経路で collect_stats も設定し直す", "criterion.collect_s
 bt_src = open(os.path.join(REPO_ROOT, "lib/sslmodel/models/barlowtwins.py"), encoding="utf-8").read()
 for attr in ("    fp32 = False", "    collect_stats = False", "    last_stats = None"):
     _check(f"旧 pickle 互換のクラス属性 `{attr.strip()}` がある", attr in bt_src)
+# グループ別 grad_norm(2026-10-07): probe は grads と同じパラメータ列で record し、epoch 末に names と rows を書く
+for kw in ("bt_probe = GradGroupProbe(model) if bt_stats is not None else None",
+           "bt_probe.record(grad_params, per_param_norms)",
+           "write_param_names(ctx.dir_name, bt_probe.names)",
+           "groups=bt_probe.rows()"):
+    _check(f"loop.py にグループ別 grad_norm の配線 `{kw[:40]}` がある", kw in loop_src)
+_check("record は grads(= grad_params)と同じ列を渡す", "grads = [p.grad.detach() for p in grad_params]" in loop_src)
 # 非有限の損失で epoch を打ち切る処理は、loss_value を append した直後・DDP 集合通信の前にあること
 i_append = loop_src.index("train_batch_loss.append(loss_value)")
 i_break = loop_src.index("first_nonfinite = i")
