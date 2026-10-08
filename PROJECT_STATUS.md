@@ -157,7 +157,8 @@ trust ratio か頭側の問題で、対策はピーク lr の引き下げ。
 実験定義: `experiments/0031_20261007_bt_diag_gradgroups_ep64/`（0030 と同じ ep64 から再開・bf16・8ノード・walltime 1h。
 0030 からの変更は出力先と名前だけ）。preflight 通過（state.pt コピー済み・`.venv` 健全・配線あり）。
 検証: `tests/test_collapse_guards.py` 74 項目、コンテナ内 `lib/sslmodel/tests/test_barlowtwins_fp32.py` 20 件、
-実モデル（小ヘッド・B=4）で 2 step 回して jsonl に列が出ることを確認。**投入は承認待ち。**
+実モデル（小ヘッド・B=4）で 2 step 回して jsonl に列が出ることを確認。
+**2026-10-08 にユーザーが投入した: job 3507401.opbs**（キュー待ち。結果は下に追記する）。
 
 ### 💥 0030 で NaN を再現し、起点を特定した（2026-10-05 12:05〜12:09, job 3486432）
 
