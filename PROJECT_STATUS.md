@@ -13,7 +13,7 @@
 > 実行は向こう。**コミットに「実装済み・未実行」が含まれるのは想定どおり。**
 > 詳細は [CLAUDE.md](CLAUDE.md)。
 
-最終更新: 2026-10-09（Barlow Twins: **0032 は `--resume_override_lr` のバグで無効**（bias グループに lr 1.6 が入り step 5 で NaN、約 1.5 ノード時間）。修正してやり直しの 0033 を定義・preflight 通過・qsub 未）
+最終更新: 2026-10-09（Barlow Twins: **A/B 診断 0033 で lr_bias 1/4 が効いた**。0030/0031 が決定的に壊れた ep66 step 357 を通過し、walltime 1h・ep84 まで健全。本番 **0034（lr_bias 0.0096・ゼロから 1600 epoch）を定義・preflight 通過・qsub 未**。要注意: 生勾配グループの grad_norm は緩やかに増えている）
 
 ### 2026-09-30: Barlow Twins (ViT-B/16) の準備 — NaN 即停止を実装・学習は未投入
 
@@ -134,6 +134,21 @@ grad_norm の増大（ランプ）は無く、**健全な曲線から突然 NaN 
   ためと思われ、**BT では val_loss が比較に使えない**。`checkpoint.pt`（最良 val_loss の保存）は
   このノイズで選ばれるので、停止時の復元元としては ep64 の `state.pt` のほうが信頼できる。
 
+### 🚀 0034: 本番 — `--lr_bias 0.0096` でゼロから 1600 epoch（2026-10-09 定義・preflight 通過・未投入）
+
+`experiments/0034_20261009_bt_vitb16_lrbias_quarter/`（run_slurm.sh / preflight.sh / resume.sh）。0029 からの変更は
+**`--lr_bias 0.0384 → 0.0096`**（公式の 0.0048×batch/256 から離れる変更。「論文準拠」と書かない）と
+**`--bt_step_log`**（step テレメトリ + グループ別 grad_norm。学習に影響せず、1 epoch 約 100KB）の 2 点。
+`--resume_override_lr` は付けない（診断専用）。スケジュール・batch・wd・λ・ヘッド・崩壊検知（`--collapse_ignore_uniformity` 含む）は 0029 と同一。
+
+**コスト（0033 実測）**: 2.27 分/epoch @8ノード（val_loss・5 epoch ごとの eval/snapshot 込み）+ 起動コピー約 7 分。
+1600 epoch ≈ 60.5h ≈ **485 ノード時間**。48h 枠では約 1,260 epoch で切れるので `resume.sh --submit` で 2 本目（約 13h）。
+`resume.sh` の `MIN_PER_EPOCH` は実測 2.3 に更新済み。**Miyabi 停止 2026-10-28 09:00** まで 446 時間（10/09 18:42 時点）。
+2 本目のキュー待ちを含めて間に合うよう、早めに投入する。
+
+preflight は 0029 の 7 項目に加えて lr_bias 0.0096 / --bt_step_log / override なし / コードが 0032・P2 修正後であることを点検する。
+投入は承認後にユーザーが行う: `qsub experiments/0034_20261009_bt_vitb16_lrbias_quarter/run_slurm.sh`。
+
 ### 🧪 0032: A/B 診断 — ep64 から `--lr_bias` を 1/4 にして同じ step 357 を越えるか（2026-10-09 定義、未投入）
 
 **位置づけ**: 診断であって完成品ではない。途中から値を変えた再開はレシピが2段階になり（ep0–64 は 0.0384、以後 0.0096）、
@@ -175,7 +190,45 @@ param_groups の dict を**保存時のもので丸ごと置き換える**（`Op
 で checkpoint.pt 無しでも落ちずに復元した。0032 のディレクトリは model_ssl.pt（= ep64 の重み）を持つので再開には使えない。
 
 **やり直し**: `experiments/0033_20261009_bt_diag_lrbias_quarter_ep64_retry/`（0032 と同じ設定、新ディレクトリ）。preflight 通過。**2026-10-09 17:49 にユーザーが投入: job 3515723.opbs**。
-起動ログで `base lr per group -> [1.6, 0.0096] (roles ['weights', 'bias'])` を確認すること。`[1.6, 1.6]` なら即 qdel。検証: `tests/test_collapse_guards.py` 77 項目、`tests/test_resume_override_lr.py` 3 件、`entry.py` の import。
+起動ログで `base lr per group -> [1.6, 0.0096] (roles ['weights', 'bias'])` を確認すること。`[1.6, 1.6]` なら即 qdel。
+
+#### ✅ 0033 の結果（2026-10-09 17:51〜18:52, walltime 1h で終了）— lr_bias 1/4 で同じ step を通過、ep84 まで健全
+
+起動ログ `--resume_override_lr: base lr per group -> [1.6, 0.0096] (roles ['weights', 'bias'])`（今回は正しい）。
+**ep66 を 390/390 完走**（0030/0031 は同じバッチ列の step 357 で NaN）。その後も walltime まで NaN・発散・崩壊検知なし、
+ep64→ep84 の 20 epoch（約 8 ノード時間）。
+
+| | 0031（lr_bias 0.0384） | **0033（lr_bias 0.0096）** |
+|---|---|---|
+| ep65 train_loss / grad_norm | 270.1 / 10.8 | 264.1 / 9.8 |
+| ep66 | step 357 で NaN | 262.5 / 9.9、完走 |
+| ep66 step 323→327 の gn_raw | 12.6 → 25 → 81 → 337 → 511 | **6.1 → 4.6 → 7.4 → 5.1 → 4.9** |
+| ep84 | — | 246.1 / 11.1（損失は 20 epoch 単調減少） |
+| eff_rank（ep80） | 305（ep65, 0031） | 316.8、uniformity -3.10 |
+
+同じ seed・同じバッチ列で、変えたのは lr_bias だけ。**0030/0031 の発散は「特定のバッチ」だけでは起きず、
+bias/LN グループの更新幅が十分なら同じバッチを通過できる** → H2' の対策として lr_bias の引き下げは成立。
+
+**⚠️ 要注意（本番で監視すること）: 生勾配グループの grad_norm は緩やかに増え続けている。**
+
+| epoch | grad_norm 中央値 | gn_raw 中央値 / 最大 |
+|---|---|---|
+| 65 | 9.6 | 4.5 / 7.0 |
+| 69 | 9.9 | 5.9 / 9.6 |
+| 73 | 10.0 | 7.0 / 10.9 |
+| 77 | 10.2 | 7.8 / 14.0 |
+| 81 | 10.5 | 8.6 / 14.1 |
+| 84 | 10.8 | 9.2 / 16.0 |
+
+重み側（gn_lars）はほぼ平坦で、増えているのは bias/LN 側（20 epoch で中央値 2 倍）。更新幅 lr_bias×gn_raw は
+ep84 で 0.0096×9.2 ≈ 0.09 と、0029 の定常（0.0384×5.4 ≈ 0.21）よりまだ小さいが、**lr は ep400 ごろまで
+ほぼピークのまま**なので、この増加が続けば後の epoch で再び臨界を越える可能性はある。DINO 0026→0028 と同じ
+「ランプは残るが速度が落ちた」型かもしれない。0034 では `--bt_step_log` を付けるので、壊れたら診断ランを
+挟まずに step 単位で読める。gn_raw の中央値が 0029 の発散直前の水準（0031 ep65: 5.4 @0.0384 → 更新幅換算で
+gn_raw ≈ 22 @0.0096）に近づいたら、lr_bias をさらに下げるか `--clip_grad`（LARS 側は正規化されるので実質
+bias/LN だけに効く）を検討する。
+
+成果物: `model_ep65〜80.pt`（診断用。完成品にはしない）。走っていた ep85 の途中で walltime（1h = 3600s）に達して killed。検証: `tests/test_collapse_guards.py` 77 項目、`tests/test_resume_override_lr.py` 3 件、`entry.py` の import。
 
 ### 🔬 0031: どのグループが先に跳ねるかを測る診断ラン（2026-10-07 定義、未投入）
 

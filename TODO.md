@@ -93,8 +93,11 @@
       **2026-10-09**: A/B 診断 `0032_20261009_bt_diag_lrbias_quarter_ep64`（`--lr_bias 0.0096 --resume_override_lr`、ep64 再開、1h）
       を定義。再開時に lr が保存値へ戻る落とし穴を `--resume_override_lr` で修正（PROJECT_STATUS「🧪 0032」）。
       **0032（job 3513691）は override のバグ（復元で `lr_role` が消え bias に lr 1.6）で無効**。修正してやり直しの
-      `0033_20261009_bt_diag_lrbias_quarter_ep64_retry` を定義・preflight 通過・**qsub 未**（PROJECT_STATUS「💥 0032 は無効」）。
-      方針: 0033 は診断のみ。効けば **0034 を `--lr_bias 0.0096` でゼロから 1600 epoch**（完成品。10/20 ごろまでに投入。
+      `0033_20261009_bt_diag_lrbias_quarter_ep64_retry` を定義（PROJECT_STATUS「💥 0032 は無効」）。
+      **0033（job 3515723, 約 8 ノード時間）: lr_bias 0.0096 で ep66 step 357 を通過、ep84 まで健全。A/B 成立。**
+      ⚠️ ただし bias/LN グループの grad_norm 中央値は 20 epoch で 4.5→9.2 と増え続けている（PROJECT_STATUS「✅ 0033 の結果」）。
+      **本番 `0034_20261009_bt_vitb16_lrbias_quarter` を定義・preflight 通過・qsub 未**（485 ノード時間、48h ×2 本）。
+      方針: 0033 は診断のみ（済）。**0034 を `--lr_bias 0.0096` でゼロから 1600 epoch**（完成品。10/20 ごろまでに投入。
       ⚠️ Miyabi は 10/28 09:00 停止。1.91 分/epoch × 1600 ≈ 51h → 48h 枠 ×2 本、resume 前提）。
       未: 初回の損失曲線から跳ね返り判定の比率（現状 2.0・未較正）を見直す。1 epoch の実測時間で見積りを更新する。
       `0015_20260806_paper_barlowtwins_vitb16` は未投入のまま残す（旧定義）。
