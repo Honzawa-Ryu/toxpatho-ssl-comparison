@@ -91,8 +91,10 @@
       **先に跳ねるのは bias/LN の生勾配グループで、起点は `backbone.blocks.1.norm1.weight`**（LN ゲイン）。head は無関係。
       H2' を支持。詳細は PROJECT_STATUS「✅ 0031 の結果」。
       **2026-10-09**: A/B 診断 `0032_20261009_bt_diag_lrbias_quarter_ep64`（`--lr_bias 0.0096 --resume_override_lr`、ep64 再開、1h）
-      を定義・preflight 通過・**qsub 未**。再開時に lr が保存値へ戻る落とし穴を `--resume_override_lr` で修正（PROJECT_STATUS「🧪 0032」）。
-      方針: 0032 は診断のみ。効けば **0033 を `--lr_bias 0.0096` でゼロから 1600 epoch**（完成品。10/20 ごろまでに投入。
+      を定義。再開時に lr が保存値へ戻る落とし穴を `--resume_override_lr` で修正（PROJECT_STATUS「🧪 0032」）。
+      **0032（job 3513691）は override のバグ（復元で `lr_role` が消え bias に lr 1.6）で無効**。修正してやり直しの
+      `0033_20261009_bt_diag_lrbias_quarter_ep64_retry` を定義・preflight 通過・**qsub 未**（PROJECT_STATUS「💥 0032 は無効」）。
+      方針: 0033 は診断のみ。効けば **0034 を `--lr_bias 0.0096` でゼロから 1600 epoch**（完成品。10/20 ごろまでに投入。
       ⚠️ Miyabi は 10/28 09:00 停止。1.91 分/epoch × 1600 ≈ 51h → 48h 枠 ×2 本、resume 前提）。
       未: 初回の損失曲線から跳ね返り判定の比率（現状 2.0・未較正）を見直す。1 epoch の実測時間で見積りを更新する。
       `0015_20260806_paper_barlowtwins_vitb16` は未投入のまま残す（旧定義）。

@@ -13,7 +13,7 @@
 > 実行は向こう。**コミットに「実装済み・未実行」が含まれるのは想定どおり。**
 > 詳細は [CLAUDE.md](CLAUDE.md)。
 
-最終更新: 2026-10-09（Barlow Twins: 0031 で起点は bias/LN の生勾配グループと判明 → **A/B 診断 0032（lr_bias 1/4, ep64 再開）を定義**。再開時に lr が保存値へ戻る落とし穴を `--resume_override_lr` で修正。preflight 通過・qsub 未）
+最終更新: 2026-10-09（Barlow Twins: **0032 は `--resume_override_lr` のバグで無効**（bias グループに lr 1.6 が入り step 5 で NaN、約 1.5 ノード時間）。修正してやり直しの 0033 を定義・preflight 通過・qsub 未）
 
 ### 2026-09-30: Barlow Twins (ViT-B/16) の準備 — NaN 即停止を実装・学習は未投入
 
@@ -138,7 +138,7 @@ grad_norm の増大（ランプ）は無く、**健全な曲線から突然 NaN 
 
 **位置づけ**: 診断であって完成品ではない。途中から値を変えた再開はレシピが2段階になり（ep0–64 は 0.0384、以後 0.0096）、
 前半の LN ゲインと LARS momentum の状態も引き継ぐので、走り切っても 4 手法比較には使わない。DINO の 0026→0028 と同じく、
-効けば **0033 として `--lr_bias 0.0096` でゼロから 1600 epoch** を回す（捨てるのは 64 epoch ≈ 20 ノード時間 = 4%）。
+効けば **本番（0034 を予定）として `--lr_bias 0.0096` でゼロから 1600 epoch** を回す（捨てるのは 64 epoch ≈ 20 ノード時間 = 4%）。
 
 **判定**（NaN は 0030/0031 とも ep66 step 357 で決定的に再現しているので、変数 1 つの直接比較になる）
 - step 357 を越えて walltime 1h（≈25 epoch）まで健全 → 更新側で抑えられる。0033 へ。
@@ -154,7 +154,28 @@ CLI で `--lr_bias` を変えても、黙って 0.0384 で走る**。`--resume_o
 `--resume_override_lr: base lr per group -> [1.6, 0.0096]` を確認すること**（preflight の末尾に手順）。
 
 実験定義: `experiments/0032_20261009_bt_diag_lrbias_quarter_ep64/`（0031 との差は `--lr_bias 0.0096 --resume_override_lr` と出力先）。
-preflight 通過。**2026-10-09 にユーザーが投入: job 3513691.opbs**（キュー待ち、予定開始 10/09 14:51）。検証: `tests/test_collapse_guards.py` 77 項目、`tests/test_resume_override_lr.py` 3 件、`entry.py` の import。
+preflight 通過。**2026-10-09 にユーザーが投入: job 3513691.opbs** → 14:44 開始、14:58 に **ep65 step 5 で NaN。無効**（約 1.5 ノード時間）。
+
+#### 💥 0032 は無効 — `--resume_override_lr` のバグで bias/LN グループに lr 1.6 が入った（2026-10-09）
+
+起動ログ: `--resume_override_lr: base lr per group -> [1.6, 1.6] (roles ['weights', 'weights'])`。
+0.0096 のつもりが **bias/LN グループに重み側の 1.6（42 倍）** が入り、5 step で NaN。この結果は lr_bias の
+A/B について何も言っていない（上げたらすぐ壊れる、という当然のこと以外）。
+
+**原因**: 役割の判別を model.py が付ける自前キー `lr_role` に頼っていたが、`optimizer.load_state_dict` は
+param_groups の dict を**保存時のもので丸ごと置き換える**（`Optimizer.update_group` は saved group を返す）ので、
+0029 の state.pt（`lr_role` を持たない）から復元した時点でキーが消え、全グループが weights 扱いになった。
+テストは保存側にも `lr_role` を付けて作っていたため、この経路を踏んでいなかった。
+
+**修正**: params の形（全テンソルが ndim<=1）で bias グループを見分ける。`--lr_bias` を指定したのに bias グループが
+見つからなければ例外で止める。`tests/test_resume_override_lr.py` に「保存側に `lr_role` が無い state からの復元」を
+再現するテストを追加（4 件通過）。0033 の preflight は optim.py がこの判別になっていることも点検する。
+
+**副産物**: P2 の修正（`restore_healthy_weights`）はこの abort で初めて実走し、`restored weights from .../state.pt (end of epoch 64)`
+で checkpoint.pt 無しでも落ちずに復元した。0032 のディレクトリは model_ssl.pt（= ep64 の重み）を持つので再開には使えない。
+
+**やり直し**: `experiments/0033_20261009_bt_diag_lrbias_quarter_ep64_retry/`（0032 と同じ設定、新ディレクトリ）。preflight 通過・**qsub 未**。
+起動ログで `base lr per group -> [1.6, 0.0096] (roles ['weights', 'bias'])` を確認すること。`[1.6, 1.6]` なら即 qdel。検証: `tests/test_collapse_guards.py` 77 項目、`tests/test_resume_override_lr.py` 3 件、`entry.py` の import。
 
 ### 🔬 0031: どのグループが先に跳ねるかを測る診断ラン（2026-10-07 定義、未投入）
 

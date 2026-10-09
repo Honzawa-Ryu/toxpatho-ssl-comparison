@@ -74,15 +74,21 @@ def override_lr_after_resume(args, optimizer, scheduler, start_epoch, log):
     **黙って保存時の値で走る**（0029 の ep64 から lr_bias を変えて A/B する exp 0032 で踏む経路）。
     通常の walltime 再開（0028）は値を変えないので、このフラグが無ければ何もしない。
 
-    グループの役割は lib/trainer/model.py が付ける `lr_role`（'bias' = LARS 除外の bias/BN グループ）
-    で見分ける。layer_wise_lr / fix_pred_lr の lr 比はここでは扱わない（未対応として止める）。
+    ⚠️ グループの役割は **params の形で見分ける**（全テンソルが ndim<=1 なら bias/BN グループ）。
+    `optimizer.load_state_dict` は param_groups の dict を保存時のものに丸ごと置き換える
+    （`Optimizer.update_group` は saved group を返し、現在の構築で付けたキーは捨てる）ため、
+    model.py が付ける `lr_role` のような自前のキーは古い state.pt から再開すると消える。
+    exp 0032（job 3513691）はこれを踏み、bias/LN グループに lr 1.6 が入って step 5 で NaN になった（無効）。
+    layer_wise_lr / fix_pred_lr の lr 比はここでは扱わない（未対応として止める）。
     """
     if getattr(args, 'layer_wise_lr', False) or getattr(args, 'fix_pred_lr', False):
         raise RuntimeError('--resume_override_lr は layer_wise_lr / fix_pred_lr と併用できない')
     lr_bias = args.lr_bias if args.lr_bias > 0 else args.lr
     base = []
     for g in optimizer.param_groups:
-        v = lr_bias if g.get('lr_role') == 'bias' else args.lr
+        is_bias_group = len(g['params']) > 0 and all(p.ndim <= 1 for p in g['params'])
+        g['lr_role'] = 'bias' if is_bias_group else 'weights'   # ログ用に付け直す(復元で消えている)
+        v = lr_bias if is_bias_group else args.lr
         g['lr'] = v
         g['initial_lr'] = v
         base.append(v)
@@ -94,6 +100,8 @@ def override_lr_after_resume(args, optimizer, scheduler, start_epoch, log):
     if start_epoch > 0:
         scheduler.update_groups(scheduler._get_lr(start_epoch - 1))
     now = [g['lr'] for g in optimizer.param_groups]
-    log(f'--resume_override_lr: base lr per group -> {base} (roles '
-        f'{[g.get("lr_role", "weights") for g in optimizer.param_groups]}); lr at epoch {start_epoch + 1}: {now}')
+    roles = [g['lr_role'] for g in optimizer.param_groups]
+    log(f'--resume_override_lr: base lr per group -> {base} (roles {roles}); lr at epoch {start_epoch + 1}: {now}')
+    if args.lr_bias > 0 and args.lr_bias != args.lr and 'bias' not in roles:
+        raise RuntimeError('--resume_override_lr: bias/BN グループが見つからない(--lr_bias が掛からない)')
     return now
