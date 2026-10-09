@@ -147,7 +147,8 @@ grad_norm の増大（ランプ）は無く、**健全な曲線から突然 NaN 
 2 本目のキュー待ちを含めて間に合うよう、早めに投入する。
 
 preflight は 0029 の 7 項目に加えて lr_bias 0.0096 / --bt_step_log / override なし / コードが 0032・P2 修正後であることを点検する。
-投入は承認後にユーザーが行う: `qsub experiments/0034_20261009_bt_vitb16_lrbias_quarter/run_slurm.sh`。
+**2026-10-09 19:30 にユーザーが投入: job 3516219.opbs**（small-g, 8ノード, walltime 48h, 384 トークン予約）。
+監視項目: 起動後 `LARS param-groups: ... bias/BN(lr=0.0096 ...)`、毎 epoch の train_loss / grad_norm、`bt_steps_ep*.jsonl` の gn_raw 中央値（約 22 に近づいたら要対処）。
 
 ### 🧪 0032: A/B 診断 — ep64 から `--lr_bias` を 1/4 にして同じ step 357 を越えるか（2026-10-09 定義、未投入）
 

@@ -96,7 +96,7 @@
       `0033_20261009_bt_diag_lrbias_quarter_ep64_retry` を定義（PROJECT_STATUS「💥 0032 は無効」）。
       **0033（job 3515723, 約 8 ノード時間）: lr_bias 0.0096 で ep66 step 357 を通過、ep84 まで健全。A/B 成立。**
       ⚠️ ただし bias/LN グループの grad_norm 中央値は 20 epoch で 4.5→9.2 と増え続けている（PROJECT_STATUS「✅ 0033 の結果」）。
-      **本番 `0034_20261009_bt_vitb16_lrbias_quarter` を定義・preflight 通過・qsub 未**（485 ノード時間、48h ×2 本）。
+      **本番 `0034_20261009_bt_vitb16_lrbias_quarter` を 2026-10-09 投入（job 3516219）**（485 ノード時間、48h ×2 本。2 本目は `resume.sh --submit`）。
       方針: 0033 は診断のみ（済）。**0034 を `--lr_bias 0.0096` でゼロから 1600 epoch**（完成品。10/20 ごろまでに投入。
       ⚠️ Miyabi は 10/28 09:00 停止。1.91 分/epoch × 1600 ≈ 51h → 48h 枠 ×2 本、resume 前提）。
       未: 初回の損失曲線から跳ね返り判定の比率（現状 2.0・未較正）を見直す。1 epoch の実測時間で見積りを更新する。
