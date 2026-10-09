@@ -13,7 +13,7 @@
 > 実行は向こう。**コミットに「実装済み・未実行」が含まれるのは想定どおり。**
 > 詳細は [CLAUDE.md](CLAUDE.md)。
 
-最終更新: 2026-10-07（Barlow Twins: 0030 の起点をさらに絞るため**グループ別 grad_norm のテレメトリ**を実装し、診断ラン 0031 を定義。preflight 通過・qsub は未実施）
+最終更新: 2026-10-09（Barlow Twins: **0031 で NaN を再々現し、先に跳ねるのは bias/LayerNorm の生勾配グループ（backbone block 1 の norm1.weight）と判明。H2' を支持**。約1ノード時間）
 
 ### 2026-09-30: Barlow Twins (ViT-B/16) の準備 — NaN 即停止を実装・学習は未投入
 
@@ -158,7 +158,47 @@ trust ratio か頭側の問題で、対策はピーク lr の引き下げ。
 0030 からの変更は出力先と名前だけ）。preflight 通過（state.pt コピー済み・`.venv` 健全・配線あり）。
 検証: `tests/test_collapse_guards.py` 74 項目、コンテナ内 `lib/sslmodel/tests/test_barlowtwins_fp32.py` 20 件、
 実モデル（小ヘッド・B=4）で 2 step 回して jsonl に列が出ることを確認。
-**2026-10-08 にユーザーが投入した: job 3507401.opbs**（キュー待ち。結果は下に追記する）。
+**2026-10-08 にユーザーが投入した: job 3507401.opbs** → 10/08 14:50 開始、14:54 に ep66 で NaN・停止。約1ノード時間。
+
+#### ✅ 0031 の結果（2026-10-09 判読）— 先に跳ねるのは bias/LayerNorm の生勾配グループ。H2' を支持
+
+**NaN は 0030 と同じ ep66 step 357 で再現した**（seed とデータ順が同じなので決定的。0029 の ep65 とは
+投入時の DataLoader の状態が違う）。→ **ep64 から再開する修正案の試行は、同じ step で壊れるか否かの直接の A/B になる。**
+
+グループ別 grad_norm（`scripts/analysis/bt_step_report.py outputs/0031_... --epoch 66`）:
+
+| step | gn_lars（重み, LARS） | gn_raw（bias/LN, 生勾配） | gn_head | top1 テンソル |
+|---|---|---|---|---|
+| ep65 全体 | med 9.1 / max 16.3 | med 5.4 / max 11.3 | med 2.2 / max 2.7 | 390/390 step で `patch_embed.proj.weight` |
+| 322 | 8.0 | 5.6 | 2.1 | patch_embed.proj.weight |
+| **323** | 11.4 | **12.6**（基準 max 超え） | 2.2 | patch_embed（9.2）, **blocks.1.norm1.weight（8.9）** |
+| **324** | 14.1 | **25.3**（基準の 2 倍超え） | 2.3 | **blocks.1.norm1.weight（23.4）**, patch_embed, blocks.1.norm1.bias |
+| 325 | 57.8（ここで初めて 2 倍超え） | 80.7 | 3.8 | blocks.1.norm1.weight（72）, patch_embed, blocks.1.attn.qkv |
+| 326 | 543 | 337 | 37.5 | blocks.1.attn.qkv.weight（327） |
+| 327 | 2160 | 511 | 590 | blocks.1.attn.qkv.weight（1240） |
+
+**読み取れること**
+1. **先に跳ねるのは `gn_raw`（bias/LayerNorm のグループ）で、`gn_lars` より 1 step 早い**（324 vs 325）。
+   起点のテンソルは **`backbone.blocks.1.norm1.weight`（LayerNorm のゲイン）** で、ep65 では一度も top1 に
+   ならなかったものが step 323 で 2 位、324 で 1 位に躍り出る。その後 `blocks.1.attn.qkv.weight`（直後の層）へ波及する。
+2. **projection_head は無関係**（`gn_head` は step 326 まで 2〜4 で平坦）。発散は backbone の入口近く
+   （patch_embed → block 1 の norm1 → attn）で起きる。損失側・頭側の仮説は外れ。
+3. この LN ゲインは `--lars_exclude_bias_bn` で **LARS 適応も weight decay も外れていて、生の勾配 × lr_bias 0.0384 ×
+   momentum 0.9** で更新される。重み側（LARS で `eta·||p||/||g||` に正規化され勾配の大きさに依らない）には
+   この経路が無い。**H2'（生勾配グループの正のフィードバック）と整合する。**
+4. ただし「何が最初に norm1 の勾配を跳ねさせたか」（特定バッチか、ゆっくり溜まった状態か）は分からない。
+   lr_bias を下げて同じ step で壊れなければ、引き金が何であれ更新側で抑えられる、という結論になる。
+
+**修正案（ep64 から再開して同じ step 357 で壊れるかを見る。1 本 1〜2 ノード時間）**
+- (1) **`--lr_bias` の引き下げ**（0.0384 → 0.0096 など 1/4）。論文の lr_biases=0.0048 は batch 2048 の値で、
+  0029 は `lr 1.6 / lr_bias 0.0384` にしている（`docs/bt_vitb16_vs_paper.md` 参照。lr_bias は論文の 8 倍）。
+  **第一候補**: 起点のグループに直接効き、論文値に近づく方向。
+- (2) `--clip_grad`（パラメータ毎クリップ）。LARS 側は正規化されるので実質 bias/LN だけに効く。閾値は ep65 の
+  per-param max から決める必要がある（patch_embed が常時 5〜9 なので、低すぎると重み側の学習を変える）。
+- (3) ピーク lr 1.6 の引き下げ。重み側は 1 step 遅れなので第一候補ではない。
+
+⚠️ ジョブ末尾の `RuntimeError: train_loss became non-finite ... no healthy checkpoint exists` は 0030 と同じで
+意図どおり（新ディレクトリに checkpoint.pt が無いので NaN 重みを model_ssl.pt に書かずに止める）。
 
 ### 💥 0030 で NaN を再現し、起点を特定した（2026-10-05 12:05〜12:09, job 3486432）
 

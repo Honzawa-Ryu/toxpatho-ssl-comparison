@@ -1,6 +1,6 @@
 # wsi-ad TODO / ロードマップ
 
-最終更新: 2026-10-07
+最終更新: 2026-10-09
 関連: [Goal.yaml](Goal.yaml) ・ [PROJECT_STATUS.md](PROJECT_STATUS.md) ・ [related_work.md](related_work.md)（先行研究サマリ）
 
 ---
@@ -87,7 +87,11 @@
       **2026-10-07**: グループ別 grad_norm（重み/bias・LN, backbone/head, 上位テンソル）のテレメトリを実装し、
       診断ラン `0031_20261007_bt_diag_gradgroups_ep64` を定義（preflight 通過・**qsub 未**・約1〜2ノード時間）。
       詳細は PROJECT_STATUS「🔬 0031」。結果で H2' の可否が決まり、修正案（lr_bias / clip_grad / ピーク lr）を選ぶ。
-      未: 0031 の投入と判読 → 修正案の試行 → 1600 epoch の再実行（⚠️ Miyabi は 10/28 09:00 停止。350〜560 ノード時間が要る）。
+      **2026-10-09**: 0031（job 3507401, 約1ノード時間）で NaN を 0030 と同じ ep66 step 357 に再現（決定的）。
+      **先に跳ねるのは bias/LN の生勾配グループで、起点は `backbone.blocks.1.norm1.weight`**（LN ゲイン）。head は無関係。
+      H2' を支持。詳細は PROJECT_STATUS「✅ 0031 の結果」。
+      未: 修正案の試行（第一候補 `--lr_bias` 1/4、ep64 から再開して step 357 の A/B）→ 1600 epoch の再実行
+      （⚠️ Miyabi は 10/28 09:00 停止。350〜560 ノード時間が要る）。
       未: 初回の損失曲線から跳ね返り判定の比率（現状 2.0・未較正）を見直す。1 epoch の実測時間で見積りを更新する。
       `0015_20260806_paper_barlowtwins_vitb16` は未投入のまま残す（旧定義）。
       ⚠️ ViT×BT の先行報告は見つからず、LARS が ViT で安定かは未検証。詳細は PROJECT_STATUS。
