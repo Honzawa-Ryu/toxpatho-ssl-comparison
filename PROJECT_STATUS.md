@@ -174,7 +174,7 @@ param_groups の dict を**保存時のもので丸ごと置き換える**（`Op
 **副産物**: P2 の修正（`restore_healthy_weights`）はこの abort で初めて実走し、`restored weights from .../state.pt (end of epoch 64)`
 で checkpoint.pt 無しでも落ちずに復元した。0032 のディレクトリは model_ssl.pt（= ep64 の重み）を持つので再開には使えない。
 
-**やり直し**: `experiments/0033_20261009_bt_diag_lrbias_quarter_ep64_retry/`（0032 と同じ設定、新ディレクトリ）。preflight 通過・**qsub 未**。
+**やり直し**: `experiments/0033_20261009_bt_diag_lrbias_quarter_ep64_retry/`（0032 と同じ設定、新ディレクトリ）。preflight 通過。**2026-10-09 17:49 にユーザーが投入: job 3515723.opbs**。
 起動ログで `base lr per group -> [1.6, 0.0096] (roles ['weights', 'bias'])` を確認すること。`[1.6, 1.6]` なら即 qdel。検証: `tests/test_collapse_guards.py` 77 項目、`tests/test_resume_override_lr.py` 3 件、`entry.py` の import。
 
 ### 🔬 0031: どのグループが先に跳ねるかを測る診断ラン（2026-10-07 定義、未投入）
