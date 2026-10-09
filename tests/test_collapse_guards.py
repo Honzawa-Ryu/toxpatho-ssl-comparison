@@ -354,6 +354,11 @@ i_sched_restore = entry_src.index("scheduler.load_state_dict(state['scheduler_st
 i_override = entry_src.index("override_lr_after_resume(args, optimizer, scheduler, start_epoch")
 _check("override は scheduler/optimizer の復元より後", i_override > i_sched_restore)
 _check("model.py が LARS の bias グループに lr_role='bias' を付ける", "'lr_role': 'bias'" in model_src)
+# abort 時の復元元(2026-10-09, レビュー P2): checkpoint.pt が無い別ディレクトリ再開でも state.pt へ戻る
+_check("loop.py は torch.load(early_stopping.path) を直接呼ばない(復元は restore_healthy_weights 経由)",
+       "torch.load(early_stopping.path)" not in loop_src)
+_check("NaN / 発散 / early stop / 崩壊の 3 箇所すべてが restore_healthy_weights を使う",
+       loop_src.count("restore_healthy_weights(model, early_stopping.path, DIR_NAME") == 3)
 # 非有限の損失で epoch を打ち切る処理は、loss_value を append した直後・DDP 集合通信の前にあること
 i_append = loop_src.index("train_batch_loss.append(loss_value)")
 i_break = loop_src.index("first_nonfinite = i")

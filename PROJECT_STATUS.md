@@ -154,7 +154,7 @@ CLI で `--lr_bias` を変えても、黙って 0.0384 で走る**。`--resume_o
 `--resume_override_lr: base lr per group -> [1.6, 0.0096]` を確認すること**（preflight の末尾に手順）。
 
 実験定義: `experiments/0032_20261009_bt_diag_lrbias_quarter_ep64/`（0031 との差は `--lr_bias 0.0096 --resume_override_lr` と出力先）。
-preflight 通過。検証: `tests/test_collapse_guards.py` 77 項目、`tests/test_resume_override_lr.py` 3 件、`entry.py` の import。
+preflight 通過。**2026-10-09 にユーザーが投入: job 3513691.opbs**（キュー待ち、予定開始 10/09 14:51）。検証: `tests/test_collapse_guards.py` 77 項目、`tests/test_resume_override_lr.py` 3 件、`entry.py` の import。
 
 ### 🔬 0031: どのグループが先に跳ねるかを測る診断ラン（2026-10-07 定義、未投入）
 
@@ -219,8 +219,13 @@ trust ratio か頭側の問題で、対策はピーク lr の引き下げ。
   per-param max から決める必要がある（patch_embed が常時 5〜9 なので、低すぎると重み側の学習を変える）。
 - (3) ピーク lr 1.6 の引き下げ。重み側は 1 step 遅れなので第一候補ではない。
 
-⚠️ ジョブ末尾の `RuntimeError: train_loss became non-finite ... no healthy checkpoint exists` は 0030 と同じで
-意図どおり（新ディレクトリに checkpoint.pt が無いので NaN 重みを model_ssl.pt に書かずに止める）。
+⚠️ ジョブ末尾の `RuntimeError: train_loss became non-finite ... no healthy checkpoint exists` は 0030 と同じ。
+NaN 重みを書かないための例外だったが、**別ディレクトリへ state.pt だけコピーして再開すると checkpoint.pt が無く、
+停止時の復元元が欠ける**（レビュー指摘 P2, 2026-10-09）。崩壊 / early stop の経路では FileNotFoundError になっていた。
+→ `lib/trainer/loop.py:restore_healthy_weights` を追加し、checkpoint.pt → state.pt の `model_state_dict`（最後の健全 epoch）
+の順で復元する。state.pt は NaN/発散の判定の後にしか保存されないので常に健全。どちらも無いときだけ例外。
+3 箇所（NaN/発散・early stop・崩壊）すべてこの経路に統一。`tests/test_abort_restore.py`（コンテナ内 3 件）で固定。
+0032 はこのコードで走る（PYTHONPATH が作業コピー）。
 
 ### 💥 0030 で NaN を再現し、起点を特定した（2026-10-05 12:05〜12:09, job 3486432）
 

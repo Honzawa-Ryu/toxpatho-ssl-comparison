@@ -122,6 +122,32 @@ def train_epoch(ctx: RunContext, model, data_loader, criterion, optimizer, epoch
             ctx.logger.logger.warning(f'Clipping telemetry could not be saved: {exc}')
     return model, np.mean(train_batch_loss), np.mean(grad_norms)
 
+def restore_healthy_weights(model, early_stopping_path, dir_name, logger):
+    """abort(NaN / 発散 / 崩壊 / early stop)時に model_ssl.pt へ書く重みの復元元を選ぶ。
+
+    優先順: checkpoint.pt(最良 val_loss) → state.pt の model_state_dict(最後の健全 epoch の末) → None。
+    別ディレクトリへ state.pt だけコピーして再開した診断ラン(0030〜0032)では checkpoint.pt が無く、
+    旧実装は NaN 時に RuntimeError、崩壊/early stop 時に FileNotFoundError で落ちていた(レビュー指摘 P2)。
+    state.pt は NaN/発散の判定の**後**にしか保存されない(train() の順序)ので、常に健全な重みを持つ。
+    戻り値は復元元の名前(None = 復元できる重みが無い)。
+    """
+    raw = distributed.unwrap(model)
+    if os.path.exists(early_stopping_path):
+        raw.load_state_dict(torch.load(early_stopping_path, map_location='cpu'))
+        logger.info(f'restored weights from {early_stopping_path} (best val_loss)')
+        return 'checkpoint.pt'
+    state_path = os.path.join(dir_name, 'state.pt')
+    if os.path.exists(state_path):
+        # state.pt は criterion / early_stopping のオブジェクトも持つので weights_only=False
+        state = torch.load(state_path, map_location='cpu', weights_only=False)
+        raw.load_state_dict(state['model_state_dict'])
+        logger.info(f'restored weights from {state_path} (end of epoch {int(state["epoch"]) + 1}; '
+                    f'no checkpoint.pt in this directory)')
+        return 'state.pt'
+    logger.warning(f'no healthy weights to restore: neither {early_stopping_path} nor {state_path} exists')
+    return None
+
+
 def diagnose_gpu_bound(ctx: RunContext, model, criterion, optimizer, batch_size, size=(224,224), n_steps=50):
     """データパイプラインを完全にバイパスして、GPU計算のみの速度を測る診断用関数"""
     args, ssl_class, DEVICE = ctx.args, ctx.ssl_class, ctx.device
@@ -276,16 +302,14 @@ def train(ctx: RunContext, model, criterion, optimizer, scheduler, early_stoppin
                 f'{"Non-finite train_loss" if nonfinite else "Diverged train_loss"} at Epoch: {epoch + 1} '
                 f'— aborting to save compute [{collapse_monitor.reason}]'
             )
-            has_ckpt = os.path.exists(early_stopping.path)
-            if nonfinite and not has_ckpt:
-                # 有限な val_loss を1度も記録していない(= 復元できる健全な重みが無い)。
+            source = restore_healthy_weights(model, early_stopping.path, DIR_NAME, LOGGER.logger)
+            if nonfinite and source is None:
+                # 健全な重みがどこにも無い(checkpoint.pt も state.pt も無い = 1 epoch も終えていない)。
                 # NaN 重みを model_ssl.pt として書き出さないよう、例外で止める。
                 raise RuntimeError(
                     f'train_loss became non-finite at Epoch {epoch + 1} and no healthy '
-                    f'checkpoint exists ({early_stopping.path}); refusing to write NaN weights'
+                    f'weights exist ({early_stopping.path} / {DIR_NAME}/state.pt); refusing to write NaN weights'
                 )
-            if has_ckpt:
-                distributed.unwrap(model).load_state_dict(torch.load(early_stopping.path))
             return model, train_loss, True
         # 崩壊監視(effective_rank等)はrank0のみで実行する。eval_loaderは全rank同一
         # (data.py: split_by_rank=False)なので結果はどのrankで計算しても同じであり、
@@ -351,7 +375,8 @@ def train(ctx: RunContext, model, criterion, optimizer, scheduler, early_stoppin
         # default: fixed epoch budget (standard SSL: epoch + cosine). only stop early if explicitly requested.
         if args.early_stop and early_stopping.early_stop:
             LOGGER.logger.info(f'Early Stopping (val_loss) at Epoch: {epoch}')
-            distributed.unwrap(model).load_state_dict(torch.load(early_stopping.path))
+            if restore_healthy_weights(model, early_stopping.path, DIR_NAME, LOGGER.logger) is None:
+                raise RuntimeError(f'early stop at Epoch {epoch + 1} but no weights to restore')
             return model, train_loss, True
         if collapse_monitor is not None and (
             (epoch + 1) % args.rank_monitor_interval == 0 or (epoch + 1) == num_epoch
@@ -369,8 +394,9 @@ def train(ctx: RunContext, model, criterion, optimizer, scheduler, early_stoppin
                     f'at Epoch: {epoch} — aborting to save compute'
                     + (f' [{collapse_monitor.reason}]' if collapse_monitor.reason else '')
                 )
-                # early_stopping.path (best val_loss checkpoint.pt) still holds the last
-                # pre-collapse snapshot; restore it so model_ssl.pt isn't the collapsed weights.
-                distributed.unwrap(model).load_state_dict(torch.load(early_stopping.path))
+                # checkpoint.pt(最良 val_loss) か state.pt(最後の健全 epoch)を復元して、
+                # 崩壊した重みを model_ssl.pt に書かないようにする。
+                if restore_healthy_weights(model, early_stopping.path, DIR_NAME, LOGGER.logger) is None:
+                    raise RuntimeError(f'collapse at Epoch {epoch + 1} but no weights to restore')
                 return model, train_loss, True
     return model, train_loss, True
