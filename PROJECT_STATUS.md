@@ -13,7 +13,7 @@
 > 実行は向こう。**コミットに「実装済み・未実行」が含まれるのは想定どおり。**
 > 詳細は [CLAUDE.md](CLAUDE.md)。
 
-最終更新: 2026-10-09（Barlow Twins: **0031 で NaN を再々現し、先に跳ねるのは bias/LayerNorm の生勾配グループ（backbone block 1 の norm1.weight）と判明。H2' を支持**。約1ノード時間）
+最終更新: 2026-10-09（Barlow Twins: 0031 で起点は bias/LN の生勾配グループと判明 → **A/B 診断 0032（lr_bias 1/4, ep64 再開）を定義**。再開時に lr が保存値へ戻る落とし穴を `--resume_override_lr` で修正。preflight 通過・qsub 未）
 
 ### 2026-09-30: Barlow Twins (ViT-B/16) の準備 — NaN 即停止を実装・学習は未投入
 
@@ -134,6 +134,28 @@ grad_norm の増大（ランプ）は無く、**健全な曲線から突然 NaN 
   ためと思われ、**BT では val_loss が比較に使えない**。`checkpoint.pt`（最良 val_loss の保存）は
   このノイズで選ばれるので、停止時の復元元としては ep64 の `state.pt` のほうが信頼できる。
 
+### 🧪 0032: A/B 診断 — ep64 から `--lr_bias` を 1/4 にして同じ step 357 を越えるか（2026-10-09 定義、未投入）
+
+**位置づけ**: 診断であって完成品ではない。途中から値を変えた再開はレシピが2段階になり（ep0–64 は 0.0384、以後 0.0096）、
+前半の LN ゲインと LARS momentum の状態も引き継ぐので、走り切っても 4 手法比較には使わない。DINO の 0026→0028 と同じく、
+効けば **0033 として `--lr_bias 0.0096` でゼロから 1600 epoch** を回す（捨てるのは 64 epoch ≈ 20 ノード時間 = 4%）。
+
+**判定**（NaN は 0030/0031 とも ep66 step 357 で決定的に再現しているので、変数 1 つの直接比較になる）
+- step 357 を越えて walltime 1h（≈25 epoch）まで健全 → 更新側で抑えられる。0033 へ。
+- 同じ step で壊れる → 引き金側（特定バッチ・溜まった状態）。次は `--clip_grad` か lr。
+- 別の step で壊れる → 遅延しただけ。さらに下げるか clip_grad 併用。
+
+**⚠️ 見つけた落とし穴（修正済み）**: `optimizer.load_state_dict` は param_groups の lr を、timm の
+`Scheduler.load_state_dict` は `__dict__.update` で `base_values` を保存時の値に戻す。そのため **state.pt から再開して
+CLI で `--lr_bias` を変えても、黙って 0.0384 で走る**。`--resume_override_lr`（`lib/trainer/optim.py:override_lr_after_resume`、
+復元の後に CLI の lr/lr_bias を optimizer と scheduler に掛け直し、再開 epoch の cosine 位置の値を timm 自身の `_get_lr` で入れ直す）
+を追加した。`tests/test_resume_override_lr.py`（コンテナ内）が落とし穴そのものと修正を固定している。
+通常の walltime 再開（0028 方式）はフラグを付けないので挙動は変わらない。**起動ログで
+`--resume_override_lr: base lr per group -> [1.6, 0.0096]` を確認すること**（preflight の末尾に手順）。
+
+実験定義: `experiments/0032_20261009_bt_diag_lrbias_quarter_ep64/`（0031 との差は `--lr_bias 0.0096 --resume_override_lr` と出力先）。
+preflight 通過。検証: `tests/test_collapse_guards.py` 77 項目、`tests/test_resume_override_lr.py` 3 件、`entry.py` の import。
+
 ### 🔬 0031: どのグループが先に跳ねるかを測る診断ラン（2026-10-07 定義、未投入）
 
 0030 で「起点は勾配の急増」まで絞れたが、合計ノルムしか無く **H2'（bias/LN の生勾配グループの正の
@@ -190,9 +212,9 @@ trust ratio か頭側の問題で、対策はピーク lr の引き下げ。
    lr_bias を下げて同じ step で壊れなければ、引き金が何であれ更新側で抑えられる、という結論になる。
 
 **修正案（ep64 から再開して同じ step 357 で壊れるかを見る。1 本 1〜2 ノード時間）**
-- (1) **`--lr_bias` の引き下げ**（0.0384 → 0.0096 など 1/4）。論文の lr_biases=0.0048 は batch 2048 の値で、
-  0029 は `lr 1.6 / lr_bias 0.0384` にしている（`docs/bt_vitb16_vs_paper.md` 参照。lr_bias は論文の 8 倍）。
-  **第一候補**: 起点のグループに直接効き、論文値に近づく方向。
+- (1) **`--lr_bias` の引き下げ**（0.0384 → 0.0096 の 1/4）。⚠️ 公式は lr_biases 0.0048 × batch/256 = 0.0384 @2048
+  なので **0029 は公式どおりで、0.0096 は公式から離れる変更**（`docs/bt_vitb16_vs_paper.md`。「論文準拠」と書かない）。
+  **第一候補**: 起点のグループに直接効く。
 - (2) `--clip_grad`（パラメータ毎クリップ）。LARS 側は正規化されるので実質 bias/LN だけに効く。閾値は ep65 の
   per-param max から決める必要がある（patch_embed が常時 5〜9 なので、低すぎると重み側の学習を変える）。
 - (3) ピーク lr 1.6 の引き下げ。重み側は 1 step 遅れなので第一候補ではない。

@@ -30,7 +30,7 @@
 | optimizer | LARS | LARS（η=0.001, momentum 0.9） | ✅ | η・momentum は論文に記載なし（実装は公式レシピ準拠のつもりだが ❓） |
 | batch size | 2048 | **2048**（256/GPU × 8 ノード） | ✅ | 4 ノードにすると 1024 になり別条件 |
 | lr（重み） | 0.2 × batch/256 = 1.6 | 1.6 | ✅ | |
-| lr（bias・正規化） | 0.0048 × batch/256 = 0.0384 | 0.0384 | ✅ | ViT では ndim≤1 のパラメータ（bias, LayerNorm）が対応 |
+| lr（bias・正規化） | 0.0048 × batch/256 = 0.0384 | 0.0384 | ✅ | ViT では ndim≤1 のパラメータ（bias, LayerNorm）が対応。⚠️ 0029 は ep65 で NaN（起点は LN ゲインの生勾配, 0031）。0032 以降は **0.0096（公式の 1/4）** を試す＝公式から離れる変更 |
 | weight decay | 1.5e-6 | 1.5e-6 | ✅ | |
 | wd・LARS 適応の除外 | bias と BN パラメータ | ndim≤1 のパラメータ（bias, LayerNorm） | ✅ | ViT 固有: `cls_token` / `pos_embed` / patch_embed は ndim≥2 なので**重み側**（wd あり・LARS 適応あり・lr 1.6） |
 | warmup | 10 epoch（= 6,250 step） | **16 epoch**（= 6,240 step） | ⚠️ | step 数を合わせたため epoch 数は変わる |

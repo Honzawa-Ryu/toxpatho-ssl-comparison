@@ -170,7 +170,7 @@ def prepare_model(
         optimizer = build_optimizer(ctx, [
             {'params': weights},
             {'params': biases, 'lr': lr_bias, 'weight_decay': 0.0, 'wd_exempt': True,
-             'weight_decay_filter': True, 'lars_adaptation_filter': True},
+             'weight_decay_filter': True, 'lars_adaptation_filter': True, 'lr_role': 'bias'},
         ], lr=lr, weight_decay=weight_decay)
         print(f"LARS param-groups: weights(lr={lr:.3g},wd={weight_decay:.1e}) | "
               f"bias/BN(lr={lr_bias:.3g},no-LARS,no-wd)")

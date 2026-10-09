@@ -90,8 +90,10 @@
       **2026-10-09**: 0031（job 3507401, 約1ノード時間）で NaN を 0030 と同じ ep66 step 357 に再現（決定的）。
       **先に跳ねるのは bias/LN の生勾配グループで、起点は `backbone.blocks.1.norm1.weight`**（LN ゲイン）。head は無関係。
       H2' を支持。詳細は PROJECT_STATUS「✅ 0031 の結果」。
-      未: 修正案の試行（第一候補 `--lr_bias` 1/4、ep64 から再開して step 357 の A/B）→ 1600 epoch の再実行
-      （⚠️ Miyabi は 10/28 09:00 停止。350〜560 ノード時間が要る）。
+      **2026-10-09**: A/B 診断 `0032_20261009_bt_diag_lrbias_quarter_ep64`（`--lr_bias 0.0096 --resume_override_lr`、ep64 再開、1h）
+      を定義・preflight 通過・**qsub 未**。再開時に lr が保存値へ戻る落とし穴を `--resume_override_lr` で修正（PROJECT_STATUS「🧪 0032」）。
+      方針: 0032 は診断のみ。効けば **0033 を `--lr_bias 0.0096` でゼロから 1600 epoch**（完成品。10/20 ごろまでに投入。
+      ⚠️ Miyabi は 10/28 09:00 停止。1.91 分/epoch × 1600 ≈ 51h → 48h 枠 ×2 本、resume 前提）。
       未: 初回の損失曲線から跳ね返り判定の比率（現状 2.0・未較正）を見直す。1 epoch の実測時間で見積りを更新する。
       `0015_20260806_paper_barlowtwins_vitb16` は未投入のまま残す（旧定義）。
       ⚠️ ViT×BT の先行報告は見つからず、LARS が ViT で安定かは未検証。詳細は PROJECT_STATUS。

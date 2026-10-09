@@ -63,3 +63,37 @@ def build_optimizer(ctx: RunContext, params, lr, weight_decay):
     if name == 'lars':
         return LARS(params, lr=lr, weight_decay=weight_decay, momentum=0.9)
     raise ValueError(f"unknown optimizer: {args.optimizer}")
+
+
+def override_lr_after_resume(args, optimizer, scheduler, start_epoch, log):
+    """--resume_override_lr: 再開後に CLI の --lr / --lr_bias を optimizer と scheduler に掛け直す。
+
+    `optimizer.load_state_dict` は param_groups の lr/initial_lr を保存時の値に戻し、timm の
+    `Scheduler.load_state_dict` は `__dict__.update` で `base_values`（各グループの基準 lr）も
+    保存時の値に戻す。そのため state.pt から再開するとき CLI で lr_bias を変えても、
+    **黙って保存時の値で走る**（0029 の ep64 から lr_bias を変えて A/B する exp 0032 で踏む経路）。
+    通常の walltime 再開（0028）は値を変えないので、このフラグが無ければ何もしない。
+
+    グループの役割は lib/trainer/model.py が付ける `lr_role`（'bias' = LARS 除外の bias/BN グループ）
+    で見分ける。layer_wise_lr / fix_pred_lr の lr 比はここでは扱わない（未対応として止める）。
+    """
+    if getattr(args, 'layer_wise_lr', False) or getattr(args, 'fix_pred_lr', False):
+        raise RuntimeError('--resume_override_lr は layer_wise_lr / fix_pred_lr と併用できない')
+    lr_bias = args.lr_bias if args.lr_bias > 0 else args.lr
+    base = []
+    for g in optimizer.param_groups:
+        v = lr_bias if g.get('lr_role') == 'bias' else args.lr
+        g['lr'] = v
+        g['initial_lr'] = v
+        base.append(v)
+    scheduler.base_values = base
+    if hasattr(scheduler, 'warmup_steps') and getattr(scheduler, 'warmup_t', 0):
+        scheduler.warmup_steps = [(v - scheduler.warmup_lr_init) / scheduler.warmup_t for v in base]
+    # 再開する epoch の cosine 位置の値を、timm 自身の計算で各グループへ入れ直す
+    # (loop.py は epoch 末に scheduler.step(epoch) を呼ぶので、epoch start_epoch の開始時の値は _get_lr(start_epoch-1))。
+    if start_epoch > 0:
+        scheduler.update_groups(scheduler._get_lr(start_epoch - 1))
+    now = [g['lr'] for g in optimizer.param_groups]
+    log(f'--resume_override_lr: base lr per group -> {base} (roles '
+        f'{[g.get("lr_role", "weights") for g in optimizer.param_groups]}); lr at epoch {start_epoch + 1}: {now}')
+    return now

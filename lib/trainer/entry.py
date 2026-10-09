@@ -25,6 +25,7 @@ import wandb
 import lib.sslmodel as sslmodel
 from lib.trainer import distributed
 from lib.trainer.context import RunContext, build_context
+from lib.trainer.optim import override_lr_after_resume
 from lib.trainer.model import prepare_model
 from lib.trainer.loop import train, diagnose_gpu_bound
 
@@ -88,6 +89,10 @@ def build_parser() -> argparse.ArgumentParser:
     # --- paper-faithful knobs (per-method) ---
     parser.add_argument('--lr_bias', type=float, default=0.0)          # Barlow Twins: separate LR for biases/BN params (0 = same as --lr)
     parser.add_argument('--lars_exclude_bias_bn', action='store_true') # LARS: exclude bias/BN (ndim<=1) from adaptation + weight decay
+    # --resume で state.pt から再開するとき、CLI の --lr / --lr_bias を optimizer と scheduler に掛け直す。
+    # 付けないと optimizer/scheduler の復元で保存時の lr に黙って戻る(lib/trainer/optim.py:override_lr_after_resume)。
+    # 「途中から lr を変える A/B 診断」専用。本番の学習では使わない(レシピが2段階になる)。
+    parser.add_argument('--resume_override_lr', action='store_true')
     # 既定では bias / LayerNorm・BNのゲイン(ndim<=1) を weight decay から除外する
     # (DINO/MAE/BT/SwAV いずれの公式実装もそうしている)。このフラグを付けると
     # 全パラメータへwdを掛ける従来挙動に戻る (SimSiam原論文のResNetレシピ再現用)。
@@ -233,6 +238,9 @@ def _run(ctx: RunContext):
         train_loss_init = state.get('train_loss')
         start_epoch = int(state['epoch']) + 1
         LOGGER.logger.info(f'Resumed from state.pt (epoch {state["epoch"]}) -> continue at epoch {start_epoch}/{args.num_epoch}')
+        if args.resume_override_lr:
+            # optimizer/scheduler の復元の**後**に掛け直す(前だと復元で元に戻る)
+            override_lr_after_resume(args, optimizer, scheduler, start_epoch, LOGGER.logger.info)
     elif args.resume:
         LOGGER.logger.info('--resume set but no state.pt found; starting fresh')
     model, train_loss, flag_finish = train(

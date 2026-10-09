@@ -348,6 +348,12 @@ for kw in ("bt_probe = GradGroupProbe(model) if bt_stats is not None else None",
            "groups=bt_probe.rows()"):
     _check(f"loop.py にグループ別 grad_norm の配線 `{kw[:40]}` がある", kw in loop_src)
 _check("record は grads(= grad_params)と同じ列を渡す", "grads = [p.grad.detach() for p in grad_params]" in loop_src)
+# --resume_override_lr(2026-10-09): 復元の後に掛け直さないと保存時の lr に戻る
+_check("CLI --resume_override_lr が定義されている", "add_argument('--resume_override_lr'" in entry_src)
+i_sched_restore = entry_src.index("scheduler.load_state_dict(state['scheduler_state_dict'])")
+i_override = entry_src.index("override_lr_after_resume(args, optimizer, scheduler, start_epoch")
+_check("override は scheduler/optimizer の復元より後", i_override > i_sched_restore)
+_check("model.py が LARS の bias グループに lr_role='bias' を付ける", "'lr_role': 'bias'" in model_src)
 # 非有限の損失で epoch を打ち切る処理は、loss_value を append した直後・DDP 集合通信の前にあること
 i_append = loop_src.index("train_batch_loss.append(loss_value)")
 i_break = loop_src.index("first_nonfinite = i")
