@@ -1,8 +1,8 @@
 #!/bin/bash
 # exp 0035 (Barlow Twins) の続き（2本目以降）を投入するための preflight + qsub。
 #
-#   bash experiments/0035_20261011_bt_vitb16_lrbias_quarter_clip3/resume.sh            # 点検のみ(既定)
-#   bash experiments/0035_20261011_bt_vitb16_lrbias_quarter_clip3/resume.sh --submit   # 点検して qsub
+#   bash experiments/0035_20261011_bt_vitb16_lrbias_quarter_clip1/resume.sh            # 点検のみ(既定)
+#   bash experiments/0035_20261011_bt_vitb16_lrbias_quarter_clip1/resume.sh --submit   # 点検して qsub
 #
 # 1600 epoch は約 60.5 時間(0033 実測 2.27 分/epoch)かかり、walltime 48h では約 1,260 epoch で切れる。
 # `state.pt` は rank0 が**毎 epoch** 書いており（loop.py:266）、`--dir_result` で
@@ -16,7 +16,7 @@
 
 set -euo pipefail
 
-EXP_NAME="0035_20261011_bt_vitb16_lrbias_quarter_clip3"
+EXP_NAME="0035_20261011_bt_vitb16_lrbias_quarter_clip1"
 PROJECT_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 OUT="${PROJECT_ROOT}/outputs/${EXP_NAME}"
 LOG_DIR="${PROJECT_ROOT}/logs/${EXP_NAME}"

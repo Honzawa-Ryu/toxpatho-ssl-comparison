@@ -3,9 +3,9 @@
 # PBS (qsub) 投入用スクリプト — Miyabi (Miyabi-G, PBS Pro) 向け。
 # 8ノード(GH200 120GB×8)マルチノードDDP。batch 256/GPU × 8 = 2048。
 #
-# 【Barlow Twins ViT-B/16 — 本番(3 回目)。0034(lr_bias 1/4)に --clip_grad 3.0 を足してゼロから 1600 epoch】
+# 【Barlow Twins ViT-B/16 — 本番(3 回目)。0034(lr_bias 1/4)に --clip_grad 1.0 を足してゼロから 1600 epoch】
 #
-# ■ 0034 からの変更点(1 点だけ): **--clip_grad 3.0**(パラメータ毎の L2 ノルムでクリップ。DINO 公式の既定値)
+# ■ 0034 からの変更点(1 点だけ): **--clip_grad 1.0**(パラメータ毎の L2 ノルムでクリップ)
 #   0034(lr_bias 0.0096)は ep84 step 367〜369 で発散し ep85 で NaN(0029 の ep65 より 19 epoch 遅いだけ。約 27 ノード時間)。
 #   起点は 0031 と同型: bias/LN の生勾配グループ(gn_raw)が 29→78→385 と跳ね、最初に跳ねたテンソルは
 #   backbone.blocks.2.norm2.weight(LN ゲイン, 24→68→323)。重み側(gn_lars)は 1 step 遅れ、head は無関係。
@@ -13,15 +13,17 @@
 #   前兆として出ていた。lr_bias の引き下げは「スパイク × lr_bias」が臨界(0029/0034 とも約 0.4)に達するのを
 #   遅らせるだけで、スパイクの成長自体は止めない。
 #   --clip_grad はパラメータ毎にノルムを閾値へ切り詰めるので、生勾配グループの更新は 1 step あたり
-#   lr_bias × 3.0 ≈ 0.03/テンソル に**上から抑えられる**。一方 LARS 適応のある重みグループは
+#   lr_bias × 1.0 ≈ 0.0096/テンソル に**上から抑えられる**。一方 LARS 適応のある重みグループは
 #   update = eta·||p||·g/||g|| で勾配の大きさに依らないため、クリップは**実質 bias/LN グループだけに効く**
-#   (0034→0035 で重み側の学習は変わらない)。閾値 3.0 は DINO 公式(utils.clip_gradients の既定)と同じ値で、
-#   健全期(ep30〜60)の生勾配グループは 104 テンソル合計で中央値 3〜5 なので、テンソル単位では閾値未満。
-#   発散直前の健全 step(ep84 step 361〜366)でも LN ゲインの最大は 4.6〜6.5 で、クリップは軽く掛かる程度。
+#   (0034→0035 で重み側の学習は変わらない)。
+#   閾値を 3.0(DINO 公式の既定)でなく 1.0 にした理由: クリップは勾配に掛かり、momentum 0.9 で最大約 10 倍まで
+#   積み上がる。0034 のスパイクは 3 step 続いた。3.0 だと積み上がった上限が 0.0096×3×10 ≈ 0.29 で、
+#   0034 の起点テンソルの 1 step 更新(24×0.0096 ≈ 0.23)と同水準になり安全側でない。1.0 なら ≈ 0.096。
+#   後半は bias/LN が頻繁にクリップされ「更新幅の上限」として働く(LN ゲインのノルムは約 25 なので学習は進む)。
 #   ⚠️ 公式 Barlow Twins にはクリップが無い(逸脱として docs/bt_vitb16_vs_paper.md に記録)。
 #   クリップの発生率は clip_steps_ep*.jsonl(lib/trainer/clip_logging.py)で追える。
 #
-# ■ 0029 からの変更点(累積): --lr_bias 0.0384→0.0096 / --bt_step_log / **--clip_grad 3.0**
+# ■ 0029 からの変更点(累積): --lr_bias 0.0384→0.0096 / --bt_step_log / **--clip_grad 1.0**
 #
 # ■ 0029 からの変更点(これが本ランの理由。「論文準拠」と一語で書かないこと)
 #   --lr_bias 0.0384 → **0.0096**(公式の 0.0048 × batch/256 = 0.0384 から離れる変更。1/4)
@@ -86,8 +88,8 @@
 #     .venv が壊れて全ノード即死する(env/CONTAINER.md)。
 #
 # 投入前提:
-#   bash experiments/0035_20261011_bt_vitb16_lrbias_quarter_clip3/preflight.sh   # 点検のみ(.venv 等)
-#   qsub experiments/0035_20261011_bt_vitb16_lrbias_quarter_clip3/run_slurm.sh   # ⚠️ ユーザー承認後
+#   bash experiments/0035_20261011_bt_vitb16_lrbias_quarter_clip1/preflight.sh   # 点検のみ(.venv 等)
+#   qsub experiments/0035_20261011_bt_vitb16_lrbias_quarter_clip1/run_slurm.sh   # ⚠️ ユーザー承認後
 # =====================================================
 #PBS -N 0035_bt_vitb16
 #PBS -q regular-g
@@ -95,14 +97,14 @@
 #PBS -l select=8
 #PBS -l walltime=48:00:00
 #PBS -j oe
-#PBS -o logs/0035_20261011_bt_vitb16_lrbias_quarter_clip3/
-#PBS -e logs/0035_20261011_bt_vitb16_lrbias_quarter_clip3/
+#PBS -o logs/0035_20261011_bt_vitb16_lrbias_quarter_clip1/
+#PBS -e logs/0035_20261011_bt_vitb16_lrbias_quarter_clip1/
 
 
 module load apptainer/1.3.5
 
 export PROJECT_ROOT="${PBS_O_WORKDIR:-$(pwd)}"
-export EXP_NAME="0035_20261011_bt_vitb16_lrbias_quarter_clip3"
+export EXP_NAME="0035_20261011_bt_vitb16_lrbias_quarter_clip1"
 
 export SCRATCH_ROOT="/local"
 export SIF_PATH="/work/share/ContainerImages-G/singularity/pytorch-ngc-26.06.sif"
@@ -145,7 +147,7 @@ NNODES=8
 NPROC_PER_NODE=1
 RUN_MODE="single"
 RUN_COMMAND="python ${PYTHON_PATH} \
-    --note bt_vitb16_lrbias_quarter_clip3 --project_path ${PROJECT_ROOT} --dir_result ${PROJECT_ROOT}/outputs/${EXP_NAME} \
+    --note bt_vitb16_lrbias_quarter_clip1 --project_path ${PROJECT_ROOT} --dir_result ${PROJECT_ROOT}/outputs/${EXP_NAME} \
     --model_name ViTB16 --ssl_name barlowtwins \
     --optimizer lars --lr 1.6 --lr_bias 0.0096 --lars_exclude_bias_bn \
     --weight_decay 1.5e-6 \
@@ -153,7 +155,7 @@ RUN_COMMAND="python ${PYTHON_PATH} \
     --proj_dim 8192 --bt_lambda 5e-3 \
     --num_epoch 1600 --warmup_t 16 --lr_min 0.0 \
     --collapse_early_stop --collapse_ignore_uniformity --collapse_loss_rebound 2.0 \
-    --bt_step_log --clip_grad 3.0 \
+    --bt_step_log --clip_grad 1.0 \
     --rank_monitor_interval 5 --save_interval 5 --resume"
 
 # =====================================================

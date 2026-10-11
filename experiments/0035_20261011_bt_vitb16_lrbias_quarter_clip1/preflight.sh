@@ -1,16 +1,16 @@
 #!/bin/bash
 # exp 0035 (Barlow Twins ViT-B/16) の**初回投入前**の点検。qsub はしない。
-#   bash experiments/0035_20261011_bt_vitb16_lrbias_quarter_clip3/preflight.sh
+#   bash experiments/0035_20261011_bt_vitb16_lrbias_quarter_clip1/preflight.sh
 # 8ノードを確保してから落ちるのは高くつくので、ローカルで一瞬で分かることは先に潰す。
 # 2本目以降は resume.sh を使う。
 set -euo pipefail
 
-EXP_NAME="0035_20261011_bt_vitb16_lrbias_quarter_clip3"
+EXP_NAME="0035_20261011_bt_vitb16_lrbias_quarter_clip1"
 PROJECT_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 SIF="/work/share/ContainerImages-G/singularity/pytorch-ngc-26.06.sif"
 fail() { echo "NG: $*" >&2; exit 1; }
 
-echo "=== exp 0035 preflight (本番・初回投入: lr_bias 1/4 + clip_grad 3.0) ==="
+echo "=== exp 0035 preflight (本番・初回投入: lr_bias 1/4 + clip_grad 1.0) ==="
 
 # 1. 同じ実験のジョブが無いか
 if qstat 2>/dev/null | grep -q "0035_bt"; then
@@ -62,11 +62,11 @@ echo "ok : 1600 epoch / --collapse_early_stop / 8ノード"
 CODE="$(grep -v '^[[:space:]]*#' "${PROJECT_ROOT}/experiments/${EXP_NAME}/run_slurm.sh")"
 grep -q -- "--lr 1.6 --lr_bias 0.0096" <<<"${CODE}" || fail "--lr_bias 0.0096 でない(0029 の 0.0384 のままでは ep65 付近で NaN になる)"
 grep -q -- "--bt_step_log" <<<"${CODE}" || fail "--bt_step_log が無い"
-grep -q -- "--clip_grad 3.0" <<<"${CODE}" || fail "--clip_grad 3.0 が無い(0034 からの唯一の変更点。無いと ep84 付近で再び発散する)"
+grep -q -- "--clip_grad 1.0" <<<"${CODE}" || fail "--clip_grad 1.0 が無い(0034 からの唯一の変更点。無いと ep84 付近で再び発散する)"
 grep -q -- "--resume_override_lr" <<<"${CODE}" && fail "--resume_override_lr が付いている(診断ラン専用。本番では付けない)"
 grep -q "all(p.ndim <= 1 for p in g\['params'\])" "${PROJECT_ROOT}/lib/trainer/optim.py" || fail "optim.py が 0032 のバグ修正前"
 grep -q "restore_healthy_weights" "${PROJECT_ROOT}/lib/trainer/loop.py" || fail "loop.py が P2 修正前"
-echo "ok : lr_bias 0.0096 / --bt_step_log / --clip_grad 3.0 / override なし / コードは 0033 時点以降"
+echo "ok : lr_bias 0.0096 / --bt_step_log / --clip_grad 1.0 / override なし / コードは 0033 時点以降"
 # 9. 停止日までの余裕(1600 epoch ≈ 60.5h + 2本目のキュー待ち)
 echo "     Miyabi 停止: 2026-10-28 09:00。$(date '+%m/%d %H:%M') 時点で残り $(( ( $(date -d '2026-10-28 09:00' +%s) - $(date +%s) ) / 3600 )) 時間。必要 ≈ 61h + キュー待ち ×2"
 
