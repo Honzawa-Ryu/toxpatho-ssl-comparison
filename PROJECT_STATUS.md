@@ -13,7 +13,7 @@
 > 実行は向こう。**コミットに「実装済み・未実行」が含まれるのは想定どおり。**
 > 詳細は [CLAUDE.md](CLAUDE.md)。
 
-最終更新: 2026-10-11（Barlow Twins: 0034 は ep84 で発散。**0035（lr_bias 1/4 + clip_grad 1.0）と 0036（bias/LN にも LARS 適応）を並列で定義**・preflight 通過・qsub 未）
+最終更新: 2026-10-12（4 手法そろえ: **MAE 0037 / SimSiam 0038 を論文の step 数にそろえて定義**・preflight 通過。BT は 0035 の 1 本に絞る（0036 は投入しない）。いずれも qsub 未）
 
 ### 2026-09-30: Barlow Twins (ViT-B/16) の準備 — NaN 即停止を実装・学習は未投入
 
@@ -133,6 +133,36 @@ grad_norm の増大（ランプ）は無く、**健全な曲線から突然 NaN 
 - `val_loss` は 9000〜10000 で train（272）の約33倍。eval モードの BN 統計とバッチ方向の正規化が噛み合わない
   ためと思われ、**BT では val_loss が比較に使えない**。`checkpoint.pt`（最良 val_loss の保存）は
   このノイズで選ばれるので、停止時の復元元としては ep64 の `state.pt` のほうが信頼できる。
+
+### 🧩 MAE 0037 / SimSiam 0038 — 4 手法をそろえる（2026-10-12 定義・未投入）
+
+これまで触っていたのは DINO（0028 完走）と BT（修正中）だけで、Goal.yaml の主比較（4 手法 × ViT-B/16）のうち
+**MAE と SimSiam は一度も走っていなかった**（0013/0016/0018 = MAE、0014 = SimSiam。8 月定義・100 epoch・未投入）。
+パッチ集合は Miyabi にしか無いので停止（10/28）前に回す。方針（ユーザー決定）: **他と同じく元論文の step 数にそろえる**。
+**BT は 0035 の 1 本に絞る**（0036 は定義を残し投入しない。0035 が駄目なときの次の候補）。
+
+| | DINO 0028 | BT 0035 | **MAE 0037** | **SimSiam 0038** |
+|---|---|---|---|---|
+| 論文の基準 | 300 ep × 1,251 step | 1000 ep × 625 step | 800 ep × 313 step（公式 PRETRAIN.md 推奨。本文最終は 1600） | 100 ep × 2,502 step |
+| 論文の総 step | 375k | 625k | 250k | 250k |
+| global batch | 1024 | 2048 | 4096 | 512 |
+| 本データの epoch | 480 | 1600 | **1284** | **160** |
+| warmup | 10 ep → 16 | 10 ep → 16 | 40 ep → **64** | なし → **16**（逸脱） |
+| ノード数 | 4 | 8 | 8 | 2 |
+| 見積り | 完走済み | ≈485 ノード時間 | ≈120〜180（実測なし） | ≈48（BT 実測から外挿） |
+
+**MAE 0037**: 公式どおり AdamW β2 0.95・wd 0.05（bias/LN 除外）・lr 1.5e-4×4096/256 = 2.4e-3・mask 0.75・norm_pix_loss・
+aug は RRC + flip のみ。逸脱は データ・bf16・崩壊検知（uniformity は外す: MAE 特徴は一様に散る目的で学習しない）。
+800 epoch 側にした理由は計算 2 倍の 1600 が停止前に収まる保証が無いため。
+
+**SimSiam 0038**: 公式どおり SGD 0.1（=0.05×512/256）・wd 1e-4・fix_pred_lr・SyncBN・batch 512。
+逸脱: backbone ViT-B（**ViT 用の公式レシピは無い**。MoCo v3 が ViT+SGD の不安定を報告）、wd を bias/LN から除外
+（ViT では MoCo v3 の慣行。外さないと LN ゲインが削られる = DINO 崩壊と同じ経路）、warmup 16 epoch（論文の大バッチ設定と同じ 10% 比率）、
+aug は他手法と共通の病理向け既定、projector 隠れ層幅は backbone 次元（768）。崩壊検知は eff_rank<5 と NaN（損失は負なので跳ね返り判定は使えない）。
+⚠️ 1 発勝負になりやすいのは SimSiam。崩壊したら Goal.yaml 方針3 どおり原因を切り分けて新番号で再実行。
+
+実験定義: `experiments/0037_20261012_mae_vitb16_step_matched/`、`experiments/0038_20261012_simsiam_vitb16_step_matched/`
+（どちらも run_slurm.sh / preflight.sh / resume.sh）。preflight 通過・**qsub 未**。
 
 ### 🔀 0036: 0035 と並列の対抗馬 — bias/LN にも LARS 適応を掛ける（2026-10-11 定義・未投入）
 
