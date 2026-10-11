@@ -99,7 +99,8 @@
       **本番 `0034_20261009_bt_vitb16_lrbias_quarter`（job 3516219）は ep84 で発散・ep85 で NaN**（0029 より 19 epoch 遅いだけ、約 27 ノード時間）。
       起点は同型（bias/LN の生勾配スパイク、blocks.2.norm2.weight）。gn_raw は ep30 から単調増加し、スパイク × lr_bias ≈ 0.4 が臨界。
       **0035 = 0034 + `--clip_grad 1.0`（生勾配グループの更新幅を上から抑える。LARS 側には効かない。3.0 は momentum 込みで安全側でないため 1.0）を定義・preflight 通過・qsub 未。**
-      次の候補（0035 が駄目なら）: `--lars_exclude_bias_bn` を外す。Miyabi 停止後の別実験: schedule-free（RAdam 等）optimizer。
+      **並列: 0036 = bias/LN にも LARS 適応（`--lars_exclude_bias_bn` を外す・clip なし）を定義・preflight 通過・qsub 未。**
+      両方完走なら逸脱の小さい 0035 を本命（事前に固定）。Miyabi 停止後の別実験: schedule-free（RAdam 等）optimizer。
       ⚠️ 停止まで 406h（10/11）。必要 61h + キュー待ち ×2。今回で決めないと間に合わない。
       方針: 0033 は診断のみ（済）。**0034 を `--lr_bias 0.0096` でゼロから 1600 epoch**（完成品。10/20 ごろまでに投入。
       ⚠️ Miyabi は 10/28 09:00 停止。1.91 分/epoch × 1600 ≈ 51h → 48h 枠 ×2 本、resume 前提）。

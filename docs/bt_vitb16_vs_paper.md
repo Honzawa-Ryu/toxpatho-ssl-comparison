@@ -98,3 +98,5 @@ warmup : 論文 10 epoch × 625 = 6,250 step → 6,250 / 390 ≈ 16 epoch (= 6,2
 3. augmentation を BYOL 流（非対称 blur・solarization・grayscale 0.2）に寄せる
 
 いずれも**新しい実験番号で、1 点ずつ変えて**記録する。
+
+**0036（0035 と並列）**: `--lars_exclude_bias_bn` を外し、bias/LayerNorm にも LARS の trust ratio を掛ける（weight decay は従来どおり外す）。公式は bias/BN を LARS 適応から外しているので逸脱。clip なし、lr_bias なし（bias/LN も lr 1.6）。
