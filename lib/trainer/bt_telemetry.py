@@ -34,7 +34,8 @@ def _num(x):
     return x if math.isfinite(x) else str(x)
 
 
-def step_rows(epoch, losses, grad_norms, stats, first_nonfinite=None, groups=(), stat_names=STAT_NAMES):
+def step_rows(epoch, losses, grad_norms, stats, first_nonfinite=None, groups=(), stat_names=STAT_NAMES,
+              group_names=None):
     """1 epoch 分の行(dict)を作る。stats / groups は step ごとの値のリスト(無ければ空)。
     stat_names は criterion ごとの統計名(BT は STAT_NAMES、SimSiam は SIMSIAM_STAT_NAMES)。"""
     rows = []
@@ -43,7 +44,7 @@ def step_rows(epoch, losses, grad_norms, stats, first_nonfinite=None, groups=(),
         if step < len(stats):
             row.update({name: _num(v) for name, v in zip(stat_names, stats[step])})
         if step < len(groups):
-            row.update({name: _num(v) for name, v in zip(GROUP_NAMES, groups[step])})
+            row.update({name: _num(v) for name, v in zip(group_names or GROUP_NAMES, groups[step])})
         if first_nonfinite == step:
             row["first_nonfinite"] = True
         rows.append(row)
@@ -51,7 +52,7 @@ def step_rows(epoch, losses, grad_norms, stats, first_nonfinite=None, groups=(),
 
 
 def write_epoch(directory, epoch, losses, grad_norms, stats_by_step, first_nonfinite=None, groups=(),
-                stat_names=STAT_NAMES, prefix="bt_steps"):
+                stat_names=STAT_NAMES, prefix="bt_steps", group_names=None):
     """rank0 だけが呼ぶ。atomic に公開し、再開した試行はタイムスタンプで区別する。
     groups は GradGroupProbe.rows() (無ければ空)。prefix は BT が "bt_steps"(既存の解析と互換)、
     他手法は "steps"。どちらも `*steps_ep{epoch:04d}_*.jsonl` で拾える。"""
@@ -59,7 +60,7 @@ def write_epoch(directory, epoch, losses, grad_norms, stats_by_step, first_nonfi
     path = Path(directory) / f"{prefix}_ep{epoch:04d}_{time.time_ns()}.jsonl"
     temporary = path.with_suffix(".tmp")
     with temporary.open("w") as handle:
-        for row in step_rows(epoch, losses, grad_norms, stats, first_nonfinite, groups, stat_names):
+        for row in step_rows(epoch, losses, grad_norms, stats, first_nonfinite, groups, stat_names, group_names):
             handle.write(json.dumps(row, allow_nan=False) + "\n")
     temporary.replace(path)
 
@@ -130,6 +131,126 @@ class GradGroupProbe:
 
     def rows(self):
         return torch.stack(self.records).cpu().tolist() if self.records else []
+
+    @property
+    def column_names(self):
+        return GROUP_NAMES
+
+
+# ---------------------------------------------------------------------------
+# 更新量・重み・内部活性の step テレメトリ(2026-10-12, 「崩壊時に原因を究明できるように」)
+#
+# 勾配(GradGroupProbe)だけでは「その勾配で重みがどれだけ動いたか」が分からない。LARS は重みの更新を
+# 勾配の大きさから切り離し、clip や Adam も更新と勾配の関係を変えるので、発散の機構(H2' のような
+# 正のフィードバック)を検証するには**実際の更新量**が要る。さらに崩壊は表現の内部(どの block の出力が
+# 先に潰れる / 膨らむか)から始まることがあるので、backbone の各 block の出力の大きさも残す。
+#   upd_w / upd_raw     optimizer.step() 前後の重みの差の L2 ノルム(ndim>1 / ndim<=1)
+#   pn_w / pn_raw       step 後の重みの L2 ノルム
+#   upd_ratio_max/_idx  テンソルごとの ||Δp|| / ||p|| の最大値とそのテンソル(名前は bt_param_names.json)
+#   ln_gain_mean / _min LayerNorm/BN のゲイン(ndim==1 の *.weight。backbone のみ)の平均と最小
+#   act_patch, act_b0..  backbone の patch_embed と各 block の出力の RMS(この step の forward の平均。
+#                        2 ビューの手法は両ビューの平均)。学習中の forward だけを測る(評価・val は測らない)
+# どれも device 上の演算で .item() の同期は増やさない。更新量のために step 前の重みを 1 回複製する
+# (BT ViT-B + 8192 ヘッドで約 0.9GB。GPU メモリに余裕がある前提)。
+# ---------------------------------------------------------------------------
+DYN_NAMES = ("upd_w", "upd_raw", "pn_w", "pn_raw", "upd_ratio_max", "upd_ratio_idx", "ln_gain_mean", "ln_gain_min")
+
+import re as _re
+_BLOCK_RE = _re.compile(r"^(module\.)?(backbone\.|student_backbone\.)?blocks\.(\d+)$")
+_PATCH_RE = _re.compile(r"^(module\.)?(backbone\.|student_backbone\.)?patch_embed$")
+
+
+class StepProbe(GradGroupProbe):
+    """GradGroupProbe に更新量・重み・内部活性を足したもの。loop.py は
+    record(勾配) → before_step(params) → optimizer.step() → after_step(params) の順に呼び、epoch 末に close()。"""
+
+    def __init__(self, model, backbone_prefix="backbone."):
+        super().__init__(model, backbone_prefix)
+        dev = self.masks[0].device
+        named = self._named_trainable(model)
+        has_bb = any(n.startswith(backbone_prefix) for n, _ in named)
+        # backbone の LN ゲインだけ(ヘッドの BN は含めない)。MAE は接頭辞が無いのでデコーダを除いたもの
+        ln = [n.endswith(".weight") and p.ndim == 1
+              and (n.startswith(backbone_prefix) if has_bb else not n.startswith(("decoder", "mask_token")))
+              for n, p in named]
+        self.ln_mask = torch.tensor(ln, device=dev)
+        self._prev = None
+        self._dyn = None
+        # 活性のフック(学習中の forward だけ数える: active のときだけ貯める)
+        self.active = False
+        mods = []
+        for name, m in model.named_modules():
+            if _PATCH_RE.match(name):
+                mods.append(("act_patch", m))
+        blocks = sorted(((int(_BLOCK_RE.match(n).group(3)), m) for n, m in model.named_modules() if _BLOCK_RE.match(n)),
+                        key=lambda t: t[0])
+        mods += [(f"act_b{i}", m) for i, m in blocks]
+        self.act_names = tuple(n for n, _ in mods)
+        self._act_sum = torch.zeros(len(mods), device=dev)
+        self._act_cnt = torch.zeros(len(mods), device=dev)
+        self._handles = []
+        for k, (_, m) in enumerate(mods):
+            self._handles.append(m.register_forward_hook(self._make_hook(k)))
+
+    @staticmethod
+    def _named_trainable(model):
+        return [(n[len("module."):] if n.startswith("module.") else n, p)
+                for n, p in model.named_parameters() if p.requires_grad]
+
+    def _make_hook(self, k):
+        def hook(_module, _inp, out):
+            if not self.active:
+                return
+            o = out[0] if isinstance(out, (tuple, list)) else out
+            with torch.no_grad():
+                self._act_sum[k] += o.detach().float().pow(2).mean().sqrt()
+                self._act_cnt[k] += 1
+        return hook
+
+    @torch.no_grad()
+    def before_step(self, params):
+        self._prev = [p.detach().clone() for p in params]
+
+    @torch.no_grad()
+    def after_step(self, params):
+        nan = torch.tensor(float("nan"), device=self._act_sum.device)
+        if self._prev is None or [id(p) for p in params] != self._ids:
+            dyn = [nan] * len(DYN_NAMES)
+        else:
+            cur = [p.detach() for p in params]
+            dn = torch.stack(torch._foreach_norm(torch._foreach_sub(cur, self._prev))).float()
+            pn = torch.stack(torch._foreach_norm(cur)).float()
+            w, raw = self.masks[0], self.masks[1]
+            ratio = dn / pn.clamp_min(1e-12)
+            rmax, ridx = ratio.max(0)
+            gains = torch.stack([p.detach().float().mean() for p, m in zip(cur, self.ln_mask.tolist()) if m]) \
+                if bool(self.ln_mask.any()) else nan.view(1)
+            dyn = [((dn * dn) * w).sum().sqrt(), ((dn * dn) * raw).sum().sqrt(),
+                   ((pn * pn) * w).sum().sqrt(), ((pn * pn) * raw).sum().sqrt(),
+                   rmax, ridx.float(), gains.mean(), gains.min()]
+        act = self._act_sum / self._act_cnt.clamp_min(1)
+        act = torch.where(self._act_cnt > 0, act, torch.full_like(act, float("nan")))
+        self._act_sum.zero_()
+        self._act_cnt.zero_()
+        self._prev = None
+        if self.records:
+            self.records[-1] = torch.cat([self.records[-1], torch.stack(dyn), act])
+
+    def rows(self):
+        # record() だけ呼ばれて after_step() が無かった step(非有限で抜けた等)は長さが揃わないので NaN で埋める
+        width = len(self.column_names)
+        fixed = [r if r.numel() == width else torch.cat([r, torch.full((width - r.numel(),), float("nan"), device=r.device)])
+                 for r in self.records]
+        return torch.stack(fixed).cpu().tolist() if fixed else []
+
+    @property
+    def column_names(self):
+        return GROUP_NAMES + DYN_NAMES + self.act_names
+
+    def close(self):
+        for h in self._handles:
+            h.remove()
+        self._handles = []
 
 
 def write_param_names(directory, names):

@@ -13,7 +13,7 @@
 > 実行は向こう。**コミットに「実装済み・未実行」が含まれるのは想定どおり。**
 > 詳細は [CLAUDE.md](CLAUDE.md)。
 
-最終更新: 2026-10-12（BT は **0039 = 公式 lr のまま修正後の損失だけ**で出すことに決定（0035 は投入しない）。BT 0039・MAE 0037・SimSiam 0038 をまとめて投入する（preflight 通過）
+最終更新: 2026-10-12（step テレメトリに**更新量・重み・LN ゲイン・backbone の各 block 出力**を追加し、崩壊時の原因究明に必要な記録を点検。BT 0039・MAE 0037・SimSiam 0038 は preflight 通過・qsub 未）
 
 ### 2026-09-30: Barlow Twins (ViT-B/16) の準備 — NaN 即停止を実装・学習は未投入
 
@@ -164,6 +164,30 @@ aug は他手法と共通の病理向け既定、projector 隠れ層幅は backb
 
 実験定義: `experiments/0037_20261012_mae_vitb16_step_matched/`、`experiments/0038_20261012_simsiam_vitb16_step_matched/`
 （どちらも run_slurm.sh / preflight.sh / resume.sh）。preflight 通過・**qsub 未**。
+
+### 📝 崩壊・発散の原因究明のために何を記録しているか（2026-10-12 点検・拡充）
+
+| 粒度 | 記録 | 手法 | ファイル |
+|---|---|---|---|
+| step | 損失（全 rank 平均）・grad_norm（クリップ前） | 全手法 | `*steps_ep*.jsonl` |
+| step | grad_norm のグループ別（ndim>1 / ndim<=1、backbone / head。MAE はエンコーダ / デコーダ）・上位 3 テンソル | 全手法 | 同上 |
+| step | **更新量**（step 前後の重みの差: ndim>1 / ndim<=1）・**重みのノルム**・**‖Δp‖/‖p‖ の最大とそのテンソル**・**LN ゲインの平均と最小**（backbone） | 全手法 | 同上（2026-10-12 追加） |
+| step | **backbone の patch_embed と各 block の出力の RMS**（学習中の forward のみ、2 ビューは平均） | 全手法 | 同上（2026-10-12 追加） |
+| step | z の std 最小・std==0 の次元数・オフセット比・c の対角・on/off 項 | BT | 同上 |
+| step | z / p の実効ランク・2 ビューの z の cos・p と z の cos・論文 Fig.2 の指標 | SimSiam | 同上 |
+| step | パラメータ毎のクリップ前ノルム・クリップ数 | `--clip_grad` 使用時 | `clip_steps_ep*.jsonl` |
+| epoch | train_loss・lr（グループ別に違えば `lr_groups`）・grad_norm 平均・ln_gain・val_loss | 全手法 | ログ |
+| 5 epoch | backbone 特徴の実効ランク（完全崩壊で 0）・`relative_spread`・feat_std・alignment・uniformity（2,048 枚の評価） | 全手法 | ログ |
+| 5 epoch | 重みのスナップショット `model_ep*.pt`（後から特徴を取り直せる） | 全手法 | outputs |
+| epoch | `state.pt`（optimizer 込み、atomic）・`state.json` | 全手法 | outputs |
+
+**原因究明の流れ**: NaN / 発散で止まったら `bt_step_report.py <dir> --epoch <N>` で、どの指標が最初に基準を外れたか
+（損失・勾配のどのグループ・どのテンソル・実際の更新量・どの block の出力・手法固有の崩壊統計）を step 単位で読む。
+足りなければ直前 epoch 末の state.pt から再開する診断ラン（0030/0031 の方式）で再現できる（データ順は seed で決定的）。
+
+**記録していないもの（既知の盲点）**: attention の分布（エントロピー。fused SDPA で取り出せない）、どのサンプルがバッチに入ったか
+（再開すれば同じ順で再現できる）、rank0 以外のローカル統計（z の統計は rank0 のローカルバッチ。勾配・損失・c は全 rank 集約後）。
+コスト: step 前の重みの複製（BT で約 0.9GB）と block 出力の RMS の計算。jsonl は 1 epoch あたり数百 KB。
 
 ### 🚀 まとめて投入: BT 0039 / MAE 0037 / SimSiam 0038（2026-10-12 決定）
 

@@ -71,3 +71,74 @@ class TestProbeGroupingAndWrite(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestStepProbeDynamics(unittest.TestCase):
+    """更新量・重み・LN ゲイン・block 出力(2026-10-12)。"""
+
+    def _model(self):
+        class Blk(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.fc, self.norm1 = torch.nn.Linear(4, 4), torch.nn.LayerNorm(4)
+
+            def forward(self, x):
+                return self.norm1(self.fc(x))
+
+        class BB(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.patch_embed = torch.nn.Linear(4, 4)
+                self.blocks = torch.nn.ModuleList([Blk(), Blk()])
+
+            def forward(self, x):
+                x = self.patch_embed(x)
+                for b in self.blocks:
+                    x = b(x)
+                return x
+        m = torch.nn.Module()
+        m.backbone, m.projection_head = BB(), torch.nn.Linear(4, 2)
+        m.forward = lambda x: m.projection_head(m.backbone(x))
+        return m
+
+    def test_updates_activations_and_hooks_removed(self):
+        torch.manual_seed(0)
+        m = self._model()
+        probe = bt_telemetry.StepProbe(m)
+        self.assertEqual(probe.act_names, ("act_patch", "act_b0", "act_b1"))
+        opt = torch.optim.SGD(m.parameters(), lr=0.1)
+        x = torch.randn(8, 4)
+        probe.active = True
+        out = m.forward(x)
+        out = out + m.forward(x)           # 2 ビュー相当: 2 回 forward
+        probe.active = False
+        out.sum().backward()
+        params = [p for p in m.parameters() if p.grad is not None]
+        probe.record(params, torch._foreach_norm([p.grad for p in params]))
+        before = [p.detach().clone() for p in params]
+        probe.before_step(params)
+        opt.step()
+        probe.after_step(params)
+        row = dict(zip(probe.column_names, probe.rows()[0]))
+        dn = [(p.detach() - b) for p, b in zip(params, before)]
+        upd_w = math.sqrt(sum(d.norm().item() ** 2 for d, p in zip(dn, params) if p.ndim > 1))
+        self.assertAlmostEqual(row["upd_w"], upd_w, places=5)
+        self.assertGreater(row["act_b1"], 0.5, "LayerNorm 出力の RMS は ≈1")
+        gains = [b.norm1.weight.detach().mean().item() for b in m.backbone.blocks]
+        self.assertAlmostEqual(row["ln_gain_mean"], sum(gains) / 2, places=5, msg="backbone の LN ゲインだけ(head は含まない)")
+        self.assertAlmostEqual(row["ln_gain_min"], min(gains), places=5)
+        m.forward(x)                       # active でない forward は数えない
+        self.assertEqual(float(probe._act_cnt.sum()), 0.0)
+        probe.close()
+        self.assertEqual(len(probe._handles), 0)
+
+    def test_row_padded_when_step_skipped(self):
+        m = self._model()
+        probe = bt_telemetry.StepProbe(m)
+        m.forward(torch.randn(3, 4)).sum().backward()
+        params = [p for p in m.parameters() if p.grad is not None]
+        probe.record(params, torch._foreach_norm([p.grad for p in params]))   # after_step 無し(非有限で抜けた)
+        row = probe.rows()[0]
+        self.assertEqual(len(row), len(probe.column_names))
+        self.assertTrue(math.isnan(row[-1]))
+        probe.close()

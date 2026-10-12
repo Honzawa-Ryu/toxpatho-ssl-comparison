@@ -24,6 +24,8 @@ COLS = ["loss", "grad_norm", "z_std_min", "n_zero_std", "z_mean_abs_max", "z_rat
         "c_diag_mean", "on_diag", "off_diag"]
 # グループ別 grad_norm(2026-10-07 以降のログにだけある。lib/trainer/bt_telemetry.py GradGroupProbe)
 GROUP_COLS = ["gn_lars", "gn_raw", "gn_backbone", "gn_head"]
+# 更新量・重み・LN ゲイン(2026-10-12 以降。bt_telemetry.StepProbe)と block 出力の RMS(act_*)
+DYN_COLS = ["upd_w", "upd_raw", "pn_w", "pn_raw", "upd_ratio_max", "upd_ratio_idx", "ln_gain_mean", "ln_gain_min"]
 
 
 def load(directory, epoch):
@@ -59,9 +61,9 @@ def main():
     base_ep = a.baseline_epoch or a.epoch - 1
     base, rows = load(a.directory, base_ep), load(a.directory, a.epoch)
     # 列は記録されているものだけ(BT: z/c 統計、SimSiam: z_nstd_sqrtd 等、MAE: 損失と勾配のみ)
-    skip = {"epoch", "step", "first_nonfinite", *GROUP_COLS} | {f"top{j}_{k}" for j in (1, 2, 3) for k in ("idx", "norm")}
+    skip = {"epoch", "step", "first_nonfinite", *GROUP_COLS, *DYN_COLS} | {f"top{j}_{k}" for j in (1, 2, 3) for k in ("idx", "norm")}
     global COLS
-    COLS = [k for k in rows[0] if k not in skip]
+    COLS = [k for k in rows[0] if k not in skip and not k.startswith("act_")]
     print(f"基準 ep{base_ep}: {len(base)} step / 対象 ep{a.epoch}: {len(rows)} step\n")
     print(f"== 基準 ep{base_ep} の step 統計 ==")
     for k in COLS:
@@ -113,7 +115,34 @@ def main():
             cnt = Counter(names[int(r["top1_idx"])] for r in rows[lo: lo + a.window + 1]
                           if isinstance(r.get("top1_idx"), (int, float)))
             print("起点前後で top1 になったテンソル: " + ", ".join(f"{n}×{k}" for n, k in cnt.most_common(5)))
+    if any("upd_w" in r for r in rows):
+        names = load_names(a.directory)
+        dyn = [c for c in DYN_COLS if c != "upd_ratio_idx"]
+        print(f"\n== 更新量・重み・LN ゲイン (ep{a.epoch} step {lo}〜{lo + a.window}) ==")
+        print("step  " + " ".join(f"{c[:10]:>10}" for c in dyn) + "   最大の ||Δp||/||p|| のテンソル")
+        for r in rows[lo: lo + a.window + 1]:
+            idx = r.get("upd_ratio_idx")
+            tname = names[int(idx)] if isinstance(idx, (int, float)) and names else str(idx)
+            print(f"{r['step']:4d}  " + " ".join(fmt(r.get(c)) for c in dyn) + f"   {tname}")
+        acts = [k for k in rows[0] if k.startswith("act_")]
+        if acts:
+            print(f"\n== backbone の block 出力の RMS (ep{a.epoch} step {lo}〜{lo + a.window}) ==")
+            print("step  " + " ".join(f"{c[4:]:>8}" for c in acts))
+            for r in rows[lo: lo + a.window + 1]:
+                print(f"{r['step']:4d}  " + " ".join(f"{r[c]:8.3g}" if isinstance(r.get(c), (int, float)) else f"{str(r.get(c)):>8}" for c in acts))
+            for c in acts:
+                bv = finite(base, c)
+                if bv:
+                    lim = 2.0 * max(bv)
+                    on = next((i for i, r in enumerate(rows) if isinstance(r.get(c), (int, float)) and r[c] > lim), None)
+                    low = 0.5 * min(bv)
+                    on_low = next((i for i, r in enumerate(rows) if isinstance(r.get(c), (int, float)) and r[c] < low), None)
+                    if on is not None or on_low is not None:
+                        print(f"  {c:9s} 基準の2倍超: step {on} / 基準の半分未満: step {on_low}")
     pre = rows[:min(cands)]
+    if not finite(pre, 'grad_norm'):
+        print(f"\n起点が step {min(cands)}(epoch の先頭)なので、起点より前の統計は無い")
+        return
     print(f"\n起点より前（step 0〜{min(cands) - 1}）: grad_norm 中央値 {st.median(finite(pre, 'grad_norm')):.3g} "
           f"最大 {max(finite(pre, 'grad_norm')):.3g}; loss 中央値 {st.median(finite(pre, 'loss')):.4g}")
 

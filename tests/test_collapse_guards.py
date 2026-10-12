@@ -350,7 +350,8 @@ bt_src = open(os.path.join(REPO_ROOT, "lib/sslmodel/models/barlowtwins.py"), enc
 for attr in ("    fp32 = False", "    collect_stats = False", "    last_stats = None"):
     _check(f"旧 pickle 互換のクラス属性 `{attr.strip()}` がある", attr in bt_src)
 # グループ別 grad_norm(2026-10-07): probe は grads と同じパラメータ列で record し、epoch 末に names と rows を書く
-for kw in ("bt_probe = GradGroupProbe(model) if bt_stats is not None else None",
+for kw in ("bt_probe = StepProbe(model) if bt_stats is not None else None",
+           "bt_probe.before_step(grad_params)", "bt_probe.after_step(grad_params)", "bt_probe.close()",
            "bt_probe.record(grad_params, per_param_norms)",
            "write_param_names(ctx.dir_name, bt_probe.names)",
            "groups=bt_probe.rows()"):

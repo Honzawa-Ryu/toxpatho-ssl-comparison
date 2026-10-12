@@ -20,7 +20,7 @@ from lib.trainer import distributed
 from lib.trainer.context import RunContext
 from lib.trainer.data import prepare_data
 from lib.trainer.clip_logging import write_epoch as write_clip_epoch
-from lib.trainer.bt_telemetry import (write_epoch as write_bt_epoch, GradGroupProbe, write_param_names,
+from lib.trainer.bt_telemetry import (write_epoch as write_bt_epoch, StepProbe, write_param_names,
                                      STAT_NAMES as BT_STAT_NAMES, SIMSIAM_STAT_NAMES)
 
 
@@ -41,7 +41,8 @@ def train_epoch(ctx: RunContext, model, data_loader, criterion, optimizer, epoch
     bt_stats = [] if step_log and distributed.is_main_process() else None
     # グループ別 grad_norm(重み/bias・LN, backbone/head)と上位テンソル。0030 で「起点は勾配の急増」
     # まで絞れたが、どのグループが先に跳ねたかが合計ノルムからは分からなかった(bt_telemetry.py)。
-    bt_probe = GradGroupProbe(model) if bt_stats is not None else None
+    # 勾配に加えて、更新量・重み・LN ゲイン・backbone の各 block の出力の大きさも step ごとに残す(bt_telemetry.StepProbe)
+    bt_probe = StepProbe(model) if bt_stats is not None else None
     # --collapse_early_stop のときは、最初の非有限の損失で epoch を打ち切る。どのみち epoch 末に
     # check_loss_finite が全 rank で停止するが、残りの step は NaN の重みで空回りするだけで、
     # 打ち切れば最大 1 epoch 分の計算を節約でき、テレメトリも最初の NaN の直後で止まる。
@@ -61,8 +62,12 @@ def train_epoch(ctx: RunContext, model, data_loader, criterion, optimizer, epoch
         if hasattr(criterion, 'update_teacher_temp'):
             criterion.update_teacher_temp(global_step)
         optimizer.zero_grad(set_to_none=True)
+        if bt_probe is not None:
+            bt_probe.active = True    # この forward の block 出力だけを測る
         with torch.amp.autocast(device_type="cuda", dtype=torch.bfloat16):
             loss = ssl_class.calc_loss(model, data, criterion)
+        if bt_probe is not None:
+            bt_probe.active = False
         if bt_stats is not None and getattr(criterion, 'last_stats', None) is not None:
             bt_stats.append(criterion.last_stats)
         loss.backward()
@@ -99,7 +104,11 @@ def train_epoch(ctx: RunContext, model, data_loader, criterion, optimizer, epoch
         raw_model = distributed.unwrap(model)
         if hasattr(raw_model, 'cancel_last_layer_gradients'):
             raw_model.cancel_last_layer_gradients(epoch)  # DINO anti-collapse (early epochs)
+        if bt_probe is not None and grads:
+            bt_probe.before_step(grad_params)
         optimizer.step()
+        if bt_probe is not None and grads:
+            bt_probe.after_step(grad_params)
         if hasattr(raw_model, 'update_moving_average'):
             raw_model.update_moving_average()
         # ログ用のlossはrank-local値だと「rank0がたまたま引いたshardのloss」に
@@ -112,12 +121,14 @@ def train_epoch(ctx: RunContext, model, data_loader, criterion, optimizer, epoch
                 f'Non-finite loss at Epoch {epoch + 1} step {i}/{niter_per_ep} (loss={loss_value}); '
                 f'stopping the epoch early')
             break
+    if bt_probe is not None:
+        bt_probe.close()   # フックを外す(評価・val の forward を測らない、次 epoch で二重登録しない)
     if bt_stats is not None:
         try:
             write_param_names(ctx.dir_name, bt_probe.names)
             is_bt = ctx.args.ssl_name == 'barlowtwins'
             write_bt_epoch(ctx.dir_name, epoch + 1, train_batch_loss, grad_norms, bt_stats, first_nonfinite,
-                           groups=bt_probe.rows(),
+                           groups=bt_probe.rows(), group_names=bt_probe.column_names,
                            stat_names=BT_STAT_NAMES if is_bt else SIMSIAM_STAT_NAMES,
                            prefix='bt_steps' if is_bt else 'steps')
         except OSError as exc:
@@ -191,8 +202,12 @@ def diagnose_gpu_bound(ctx: RunContext, model, criterion, optimizer, batch_size,
             data = [torch.randn(batch_size, 3, *size, device=DEVICE),
                     torch.randn(batch_size, 3, *size, device=DEVICE)]
         optimizer.zero_grad(set_to_none=True)
+        if bt_probe is not None:
+            bt_probe.active = True    # この forward の block 出力だけを測る
         with torch.amp.autocast(device_type="cuda", dtype=torch.bfloat16):
             loss = ssl_class.calc_loss(model, data, criterion)
+        if bt_probe is not None:
+            bt_probe.active = False
         loss.backward()
         optimizer.step()
     torch.cuda.synchronize()
