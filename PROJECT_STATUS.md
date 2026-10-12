@@ -13,7 +13,26 @@
 > 実行は向こう。**コミットに「実装済み・未実行」が含まれるのは想定どおり。**
 > 詳細は [CLAUDE.md](CLAUDE.md)。
 
-最終更新: 2026-10-01（DINO 0028 の全96時点と後半のEffrank増加を解析。所見ベンチマークは準備待ち）
+最終更新: 2026-10-12（DINO 0028 を tggate-bench で下流評価する準備。実装済み・未実行）
+
+### 2026-10-12: tggate-bench（min20）での下流評価を実装（未実行）
+
+ユーザー指示: 後半の rank 増加が性能につながるかを見るため、改修中の tggate-bench の現状版で試す。
+決定事項（ユーザー確認済み）: ベンチマークは tggate-bench、対象は ep20 / 85 / 160 / 320 / 400 / 440 / 480、
+コードはこちら側に置き tggate-bench は変更しない、評価は異常度（0011）＋ridge（0002）で ABMIL は外す。
+
+- タイル（51試験・4,021枚 × 500枚）は andre01 の tggate-bench outputs に既にあり、転送は不要だった。
+- `lib/analysis/tggate_bench.py` と `scripts/evaluate/tggate_bench_dino.py`（extract / eval / summarize）を追加。
+  tggate-bench の experiment.py を overlay ルートからそのまま実行する。
+  チェックポイント読み込みは `dino_epoch_analysis.load_student_backbone` に切り出して共用。
+- 旧 `wsi-ad/.venv` は消えていたため、tggate-bench の `.venv`（torch 2.11 / timm 1.0.30）を読み取りで使う。
+- 検証: CPU テスト11件成功（npz の配置・キー・パディング、再開、タイル欠損時の停止）。
+  実チェックポイント7本の存在と ep480 の strict 読み込み、overlay から 0011 / 0002 が
+  ラベルを読み、埋め込みのパスを overlay 内に解決することを確認（埋め込み未作成で止まるところまで）。
+- **抽出・評価は未実行。sbatch 投入はユーザー確認待ち。**
+  手順と解釈上の注意（事前学習との重複の可能性が高い、旧ラベル）は
+  [評価手順](docs/evaluation/dino_0028_protocol.md)「試行: tggate-bench」。
+
 
 ### 2026-10-01: 全96時点の CKA と後半の Effrank を詳しく確認
 

@@ -1,0 +1,8 @@
+# DINO 0028 on tggate-bench (2026-10-12 trial; tggate-bench is under revision).
+# Labels are the benchmark's current (old) 6-finding table, not its revised design.
+bench_root: /workspace/andre01/honzawa/02-playground/tggate-bench
+dataset: min20
+checkpoint_dir: /workspace/andre01/honzawa/02-playground/toxpatho-ssl-comparison/outputs/0028_20260917_dino_lr_half
+epochs: [20, 85, 160, 320, 400, 440, 480]
+overlay: /workspace/andre01/honzawa/02-playground/toxpatho-ssl-comparison/outputs/evaluation_dino_0028/tggate_min20/bench_overlay
+summary_dir: /workspace/andre01/honzawa/02-playground/toxpatho-ssl-comparison/outputs/evaluation_dino_0028/tggate_min20/summary

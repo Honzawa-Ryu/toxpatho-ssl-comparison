@@ -35,6 +35,8 @@
       - [x] **同日の追加指示で CKA を先行実行**。旧 shard の100スライド×20枚で5epochを比較。
         全体CKAとスライド平均を除いたCKA、特徴健全性、η²、代表パッチを生成。
         [レポート](/workspace/andre01/honzawa/02-playground/toxpatho-ssl-comparison/outputs/evaluation_dino_0028/cka_20261001/report.md)。学習WSIとの重複は未確認。
+      - [ ] **tggate-bench（min20）で試行**（2026-10-12、実装済み・未実行）。7時点、異常度＋ridge。
+        `scripts/evaluate/tggate_bench_dino_*.sbatch` を投入 → `tggate_bench_dino.py summarize`。
       - [ ] ベンチマーク結果と今回の CKA・特徴推移を対応づけて解釈する。
       - [x] **追加指示で全96時点（ep5〜480、5刻み）を解析**。同じ2,000枚で全CKAと
         隣接CKA、スペクトル、L2/最終LayerNorm除去の確認、後半12点のFP32照合を完了。

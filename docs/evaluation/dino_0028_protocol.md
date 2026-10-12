@@ -67,6 +67,38 @@ export OPENBLAS_NUM_THREADS=4 OMP_NUM_THREADS=4 MKL_NUM_THREADS=4 CUDA_VISIBLE_D
   --fp32-output "${EVAL_OUT}_fp32" --fp32-output "${EVAL_OUT}_fp32_jumps"
 ```
 
+## 試行: tggate-bench（min20）での下流評価（2026-10-12、実装済み・未実行）
+
+ユーザー指示: 改修中の tggate-bench の現状版で、いったん試す。
+対象は ep20 / 85 / 160 / 320 / 400 / 440 / 480。評価は Exp 0011（異常度、学習なし）と
+Exp 0002（mean / max / topk プーリング＋ridge、試験単位 LOSO）。ABMIL は今回外す。
+
+- tggate-bench は読むだけ。`outputs/evaluation_dino_0028/tggate_min20/bench_overlay/` を
+  PROJECT_ROOT にして、tggate-bench の experiment.py をそのまま実行する。
+  overlay の `lib/` とラベル表は tggate-bench へのシンボリックリンク。
+  DINO の埋め込みは Exp 0010 と同じ配置・キーの npz（`dino0028-epXXX`）で overlay に書く。
+- 入力は tggate-bench 0009 のタイル（51試験・4,021枚 × 500枚、256 px・level 0）。
+  前処理は tggate-bench の UNI / ResNet50 と同じ（Resize 224 + CenterCrop 224、ImageNet 正規化）。
+  student backbone の CLS（768次元）、bf16 autocast。7時点を1回のタイル読み込みでまとめて流す。
+- 集計は tggate-bench Exp 0005 と同じ推定（所見平均した試験ごとの値の平均、試験単位ブートストラップ）。
+  既存5モデル＋画像統計の結果は tggate-bench の outputs から読む。
+  対応ありの差（各 epoch − ResNet50 / UNI、各 epoch − ep480）も試験単位で出す。
+
+解釈上の注意:
+- 0028 は TG-GATEs 肝臓パッチで事前学習している。評価スライドが事前学習に含まれる可能性が高く、
+  UNI 等との比較は公平でない。主に epoch 間の比較として読む。
+- ラベルは tggate-bench の旧設計（6所見の程度）。10/12 に決まった新設計（肝臓所見のいずれか）は未実装。
+- 0028 の学習パッチの倍率は未確認。256 px（20倍）を 224 px に縮小して入力する。
+
+実行手順（評価用 worktree から。投入はユーザー確認後）:
+
+```bash
+sbatch scripts/evaluate/tggate_bench_dino_extract.sbatch          # GPU 1枚、数時間
+sbatch --dependency=afterok:<上のjob> scripts/evaluate/tggate_bench_dino_eval.sbatch  # 28タスク、CPU
+/workspace/andre01/honzawa/02-playground/tggate-bench/.venv/bin/python \
+  scripts/evaluate/tggate_bench_dino.py summarize
+```
+
 ## 第1段階: 学習の良否
 
 対象は `0028_20260917_dino_lr_half` の ep20 / ep85 / ep160 / ep320 / ep480。

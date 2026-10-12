@@ -58,6 +58,22 @@ def sample_tar(path, scan_patches, per_slide, max_slides):
     return selected, images
 
 
+def load_student_backbone(checkpoint):
+    """ViT-B/16 student backbone of a DINO 0028 checkpoint, on CPU, strict."""
+    import torch
+    import timm
+
+    state = torch.load(checkpoint, map_location="cpu", weights_only=True, mmap=True)
+    backbone_state = {key.removeprefix("student_backbone."): value
+                      for key, value in state.items() if key.startswith("student_backbone.")}
+    if not backbone_state:
+        raise ValueError(f"No student_backbone weights in {checkpoint}")
+    model = timm.create_model("vit_base_patch16_224", num_classes=0,
+                              dynamic_img_size=True, drop_path_rate=.1)
+    model.load_state_dict(backbone_state, strict=True)
+    return model
+
+
 def extract(shard, checkpoint_root, epochs, output, scan_patches=5000,
             per_slide=20, max_slides=100, batch_size=64, device_name="cuda:0",
             precision="bf16", expected_sample_hash=None):
@@ -127,17 +143,9 @@ def extract(shard, checkpoint_root, epochs, output, scan_patches=5000,
     print(f"Fixed {len(selected)} patches from {max_slides} slides; sample={sample_hash}", flush=True)
     for epoch, checkpoint in zip(epochs, checkpoints):
         start = time.monotonic()
-        state = torch.load(checkpoint, map_location="cpu", weights_only=True, mmap=True)
-        backbone_state = {key.removeprefix("student_backbone."): value
-                          for key, value in state.items() if key.startswith("student_backbone.")}
-        if not backbone_state:
-            raise ValueError(f"No student_backbone weights in {checkpoint}")
-        norm_weight = backbone_state["norm.weight"].float().numpy().copy()
-        norm_bias = backbone_state["norm.bias"].float().numpy().copy()
-        model = timm.create_model("vit_base_patch16_224", num_classes=0,
-                                  dynamic_img_size=True, drop_path_rate=.1)
-        model.load_state_dict(backbone_state, strict=True)
-        del state, backbone_state
+        model = load_student_backbone(checkpoint)
+        norm_weight = model.norm.weight.detach().float().numpy().copy()
+        norm_bias = model.norm.bias.detach().float().numpy().copy()
         model = model.to(device).eval()
         features = []
         with torch.inference_mode():
