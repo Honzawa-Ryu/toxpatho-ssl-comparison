@@ -126,7 +126,7 @@
       目的=UNIとの差のうち「アーキ規模由来」を単離。VRAM実測 bs=256で約24GB/48GB（余裕）。
       注意: 約2〜2.5倍/ep→100epは72h枠超過の可能性、state.pt毎ep保存でresume前提。投入コマンド:
       `sbatch experiments/20260713_000001_tggate_vitl16_mae/run_slurm.sh`
-- [ ] **MAE / SimSiam を論文の step 数にそろえて事前学習**（2026-10-12 定義・preflight 通過・qsub 未）
+- [ ] **MAE / SimSiam を論文の step 数にそろえて事前学習**（2026-10-12 投入: MAE job 3534536 / SimSiam job 3534537。BT 0039 は job 3534535）
       `0037_20261012_mae_vitb16_step_matched`（2568 epoch = 論文本文 1600 ep の step 数、8 ノード、見積り 240〜360 ノード時間。停止をまたいだら停止明けに resume）
       `0038_20261012_simsiam_vitb16_step_matched`（160 epoch = 論文 100 ep の step 数、2 ノード、見積り 48 ノード時間）
       詳細は PROJECT_STATUS「🧩 MAE 0037 / SimSiam 0038」。旧定義 0013/0014/0016/0018（100 epoch）は使わない。

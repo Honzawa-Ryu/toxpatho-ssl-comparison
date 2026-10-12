@@ -13,7 +13,7 @@
 > 実行は向こう。**コミットに「実装済み・未実行」が含まれるのは想定どおり。**
 > 詳細は [CLAUDE.md](CLAUDE.md)。
 
-最終更新: 2026-10-12（step テレメトリに**更新量・重み・LN ゲイン・backbone の各 block 出力**を追加し、崩壊時の原因究明に必要な記録を点検。BT 0039・MAE 0037・SimSiam 0038 は preflight 通過・qsub 未）
+最終更新: 2026-10-12（**BT 0039 / MAE 0037 / SimSiam 0038 を投入**（job 3534535 / 3534536 / 3534537、キュー待ち））
 
 ### 2026-09-30: Barlow Twins (ViT-B/16) の準備 — NaN 即停止を実装・学習は未投入
 
@@ -204,6 +204,8 @@ aug は他手法と共通の病理向け既定、projector 隠れ層幅は backb
 
 `experiments/0039_20261012_bt_vitb16_official_fixedloss/`（run_slurm.sh / preflight.sh / resume.sh）。preflight は公式 lr・clip なし・
 修正後の損失（global 標準化 + eps）とスケジュールであることを点検する。
+
+**2026-10-12 16:26 にユーザーが 3 本投入**: BT 0039 = **job 3534535**、MAE 0037 = **job 3534536**、SimSiam 0038 = **job 3534537**（いずれもキュー待ち）。
 
 ### 🛠️ 追加レビュー 3 点（BT 損失・崩壊検知）を修正（2026-10-12）
 
