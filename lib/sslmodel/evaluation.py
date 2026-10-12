@@ -78,6 +78,10 @@ class SSLEvaluator:
         metrics["effective_rank"] = eff_rank
         metrics["normalized_effective_rank"] = norm_eff_rank
         metrics["feature_dim_std"] = Z.std(dim=0).mean().item()
+        # ばらつき / 大きさ。完全崩壊で 0 に近づく(effective_rank が 0 になる判定と同じ量)
+        Zf = Z.float()
+        metrics["relative_spread"] = ((Zf - Zf.mean(0)).pow(2).mean().sqrt()
+                                      / Zf.pow(2).mean().sqrt().clamp_min(1e-30)).item()
 
         if proj1_list:
             Z_p1 = torch.cat(proj1_list)[: self.samples_n]
@@ -101,12 +105,31 @@ class SSLEvaluator:
             return model.forward_features(x)
         return model(x)
 
-    def _effective_rank(self, Z: torch.Tensor):
+    # サンプル間のばらつき(中心化後の RMS)が特徴の大きさ(RMS)のこの比を下回ったら、特徴は定数に潰れている
+    # とみなし実効ランク 0 を返す。健全な特徴の比は 0.1〜1 程度、fp32 の評価で入力に依らず同じ出力なら 1e-6 以下。
+    COLLAPSE_SPREAD_RATIO = 1e-3
+
+    @classmethod
+    def _effective_rank(cls, Z: torch.Tensor):
+        """実効ランク(Roy & Vetterli 2007: 正規化特異値のエントロピーの exp)。
+
+        ⚠️ 完全崩壊(全サンプルが同じ特徴)では中心化後の特異値がすべて 0(か丸め誤差)になる。旧実装は
+        各特異値に 1e-10 を足して正規化していたため、一様分布になって**実効ランクが最大の d(768)を返し**、
+        崩壊を見逃していた(レビュー指摘 2026-10-12)。丸め誤差だけの特異値も同じく一様に近く大きな値になるので、
+        ばらつきが特徴の大きさに比べて無視できるときは 0 を返す。
+        """
         d = Z.size(1)
+        Z = Z.float()
         Z_c = Z - Z.mean(dim=0)
         _, S, _ = torch.linalg.svd(Z_c, full_matrices=False)
-        p = (S + 1e-10) / (S + 1e-10).sum()
-        entropy = -(p * p.log()).sum()
+        spread = Z_c.pow(2).mean().sqrt()
+        scale = Z.pow(2).mean().sqrt()
+        if not torch.isfinite(S).all():
+            return float('nan'), float('nan'), S.numpy()
+        if S.sum() <= 0 or spread <= cls.COLLAPSE_SPREAD_RATIO * scale:
+            return 0.0, 0.0, S.numpy()
+        p = S / S.sum()
+        entropy = -(p * torch.log(p.clamp_min(1e-30))).sum()
         eff_rank = entropy.exp()
         return eff_rank.item(), (eff_rank / d).item(), S.numpy()
 

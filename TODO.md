@@ -128,6 +128,9 @@
       `0037_20261012_mae_vitb16_step_matched`（2568 epoch = 論文本文 1600 ep の step 数、8 ノード、見積り 240〜360 ノード時間。停止をまたいだら停止明けに resume）
       `0038_20261012_simsiam_vitb16_step_matched`（160 epoch = 論文 100 ep の step 数、2 ノード、見積り 48 ノード時間）
       詳細は PROJECT_STATUS「🧩 MAE 0037 / SimSiam 0038」。旧定義 0013/0014/0016/0018（100 epoch）は使わない。
+- [ ] **比較時の注意: MAE の特徴は patch token の平均、他 3 手法は CLS token**（2026-10-12 レビュー）。
+      表現比較（`lib/analysis`）と下流評価（`toxpatho-uni` の `extract_features.py`）で取り出し方を揃えるか、差として明記する。
+      併せて DINO 0028 / BT 0029〜0034 は旧 lr スケジュール（減衰が warmup 分はみ出す + 1 epoch 遅れ）で走った点も記載する。
 - [ ] 本命4手法（SimSiam / Barlow Twins / MAE / DINO）の同一条件・事前学習
       - 実行中: MAE(job 6287) / DINO(6288) / SimSiam-wd(6289, SwAV完了待ち) / BT=完了済み
       - [ ] **DINOのeff_rank崩壊監視**（epoch3でloss≈ln(K)に戻る挙動あり。epoch5監視、崩壊確定なら

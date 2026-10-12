@@ -235,7 +235,7 @@ _check("update() は従来どおり NaN を無視する（検知は check_loss_f
 # 保存し、state.pt も NaN 重みで上書きされる。順序そのものが防御なのでソースで固定する。
 loop_src = open(os.path.join(REPO_ROOT, "lib/trainer/loop.py"), encoding="utf-8").read()
 i_check = loop_src.index("collapse_monitor.check_loss_finite(")
-i_state = loop_src.index("torch.save(state, f'{DIR_NAME}/state.pt')")
+i_state = loop_src.index("atomic_torch_save(state, f'{DIR_NAME}/state.pt')")
 i_early = loop_src.index("early_stopping(val_epoch_loss")
 _check("check_loss_finite は state.pt 保存より前", i_check < i_state)
 _check("check_loss_finite は early_stopping() より前", i_check < i_early)
@@ -313,7 +313,7 @@ for kw in ("uniformity_threshold=None if args.collapse_ignore_uniformity",
     _check(f"model.py が {kw.split('=')[0]} を CollapseMonitor へ渡している", kw in model_src)
 i_reb = loop_src_after = open(os.path.join(REPO_ROOT, "lib/trainer/loop.py"), encoding="utf-8").read()
 i_rebound = i_reb.index("collapse_monitor.check_loss_rebound(")
-_check("check_loss_rebound は state.pt 保存より前", i_rebound < i_reb.index("torch.save(state, f'{DIR_NAME}/state.pt')"))
+_check("check_loss_rebound は state.pt 保存より前", i_rebound < i_reb.index("atomic_torch_save(state, f'{DIR_NAME}/state.pt')"))
 _check("check_loss_rebound は early_stopping() より前", i_rebound < i_reb.index("early_stopping(val_epoch_loss"))
 
 
@@ -368,6 +368,13 @@ _check("打ち切りは --collapse_early_stop のときだけ（既存の実験�
        "stop_on_nonfinite = getattr(ctx.args, 'collapse_early_stop', False)" in loop_src)
 _check("テレメトリは rank0 だけが貯める",
        "bt_stats = [] if step_log and distributed.is_main_process() else None" in loop_src)
+# レビュー指摘(2026-10-12): 保存は atomic、scheduler は step(epoch + 1)、state.json は state.pt の後
+_check("state.pt は atomic_torch_save で保存する", "atomic_torch_save(state, f'{DIR_NAME}/state.pt')" in loop_src
+       and "    torch.save(state, f'{DIR_NAME}/state.pt')" not in loop_src)
+_check("state.json は state.pt の後に書く",
+       loop_src.index("atomic_torch_save(state, f'{DIR_NAME}/state.pt')") < loop_src.index("write_state_meta(DIR_NAME"))
+_check("scheduler は epoch 末に step(epoch + 1)", "scheduler.step(epoch + 1)" in loop_src and "scheduler.step(epoch)\n" not in loop_src)
+_check("scheduler の cosine 長は num_epoch - warmup_t", "t_initial=max(1, num_epoch - warmup_t)" in model_src)
 # --step_log(2026-10-12): 全手法で step テレメトリ。BT / SimSiam は criterion の統計も
 _check("CLI --step_log が定義されている", "add_argument('--step_log'" in entry_src)
 _check("model.py は BT と SimSiam の criterion に collect_stats を設定する",

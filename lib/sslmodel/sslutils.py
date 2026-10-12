@@ -242,9 +242,14 @@ class SimSiam:
         cos = nn.functional.cosine_similarity
 
         def erank(x):
-            sv = torch.linalg.svdvals(x - x.mean(0))
-            q = sv / sv.sum().clamp_min(1e-12)
-            return torch.exp(-(q * torch.log(q.clamp_min(1e-12))).sum())
+            xc = x - x.mean(0)
+            sv = torch.linalg.svdvals(xc)
+            q = sv / sv.sum().clamp_min(1e-30)
+            r = torch.exp(-(q * torch.log(q.clamp_min(1e-30))).sum())
+            # 完全崩壊(ばらつきが丸め誤差だけ)は丸め誤差の特異値が一様に近く大きな値になるので 0 にする
+            # (lib/sslmodel/evaluation.py SSLEvaluator._effective_rank と同じ判定)
+            collapsed = xc.pow(2).mean().sqrt() <= 1e-3 * x.pow(2).mean().sqrt()
+            return torch.where(collapsed, torch.zeros_like(r), r)
 
         return torch.stack([
             zn.std(0).mean() * d ** 0.5,

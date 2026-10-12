@@ -37,29 +37,46 @@ if qstat 2>/dev/null | grep -q "0038_si"; then
 fi
 echo "ok : 実行中の 0038 ジョブは無い"
 
-# 2. resume を止めるファイルが無いか
+# 2〜4. どこまで「保存済み」か。完了判定はログではなく保存済みの状態と成果物で行う(レビュー指摘 2026-10-12):
+#   epoch のログ行は val_loss・state.pt 保存より前に出るので、ログの最終 epoch は保存されていないことがある。
+#   state.json は state.pt を atomic に置き換えた**後**に書かれる(lib/trainer/loop.py:write_state_meta)。
+STATE_JSON="${OUT}/state.json"
+if [ -f "${STATE_JSON}" ]; then
+  SAVED_EP=$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['completed_epochs'])" "${STATE_JSON}") \
+    || fail "state.json を読めない: ${STATE_JSON}"
+  echo "ok : state.json の保存済み epoch = ${SAVED_EP} / ${NUM_EPOCH}（$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['saved_at'])" "${STATE_JSON}")）"
+else
+  # state.json を書く前のコードで走ったラン。ログの最終 epoch は未保存かもしれないので 1 引いて扱い、完了とはみなさない
+  LOG_EP=$(grep -ah "Epoch: [0-9]*, train_loss" "${LOG_DIR}"/*.OU 2>/dev/null \
+           | sed 's/.*Epoch: \([0-9]*\),.*/\1/' | sort -n | tail -1)
+  [ -n "${LOG_EP}" ] || fail "state.json もログの epoch 行も無い。${OUT} と ${LOG_DIR} を確認すること"
+  SAVED_EP=$(( LOG_EP - 1 ))
+  echo "⚠️ : state.json が無い(旧コードのラン)。ログの最終 epoch ${LOG_EP} は未保存の可能性があるので ${SAVED_EP} とみなす"
+fi
+LAST_EP="${SAVED_EP}"
+
 if [ -f "${OUT}/model_ssl.pt" ]; then
-  echo "NG : ${OUT}/model_ssl.pt が存在する。entry.py がここで即終了する" >&2
-  echo "     続けるなら退避してから再実行:" >&2
-  echo "       mv ${OUT}/model_ssl.pt ${OUT}/model_ssl_stopped_\$(date +%Y%m%d).pt" >&2
+  if [ "${SAVED_EP}" -ge "${NUM_EPOCH}" ]; then
+    echo "完走済み: model_ssl.pt があり、state.json は ${SAVED_EP}/${NUM_EPOCH} epoch。resume は不要。"
+    exit 0
+  fi
+  echo "NG : ${OUT}/model_ssl.pt があるのに保存済みは ${SAVED_EP}/${NUM_EPOCH} epoch = 崩壊/NaN 等で途中停止したラン" >&2
+  echo "     entry.py は model_ssl.pt があると即終了する。崩壊での停止なら resume せず新しい実験番号で(Goal.yaml 方針3)" >&2
   exit 1
 fi
 echo "ok : model_ssl.pt は無い（resume を妨げない）"
 
-# 3. state.pt の有無と鮮度
 [ -f "${OUT}/state.pt" ] || fail "${OUT}/state.pt が無い。--resume は fresh start になる"
+[ ! -f "${OUT}/state.pt.tmp" ] || echo "⚠️ : state.pt.tmp が残っている(保存中に終了した)。state.pt は直前の正常な版。tmp は消してよい"
 echo "ok : state.pt あり ($(du -h "${OUT}/state.pt" | cut -f1), 更新 $(date -r "${OUT}/state.pt" '+%m/%d %H:%M'))"
 
-# 4. どこまで進んだか（state.pt は 1.7GB あるのでログの最終 epoch 行で見る）
-LAST_EP=$(grep -h "Epoch: " "${LOG_DIR}"/*.OU 2>/dev/null \
-          | sed 's/.*Epoch: \([0-9]*\),.*/\1/' | sort -n | tail -1)
-[ -n "${LAST_EP}" ] || fail "ログから最終 epoch を取れない。${LOG_DIR} を確認すること"
 REMAIN=$(( NUM_EPOCH - LAST_EP ))
-echo "ok : ログの最終 epoch = ${LAST_EP} / ${NUM_EPOCH}（残り ${REMAIN}）"
-
 if [ "${REMAIN}" -le 0 ]; then
-  echo "1600 epoch に到達済み。resume は不要。"
-  exit 0
+  # 全 epoch 保存済みだが model_ssl.pt が無い(最終保存の直後に終了)。resume すればループは即抜けて成果物を書く
+  REMAIN=1
+  echo "ok : 全 epoch 保存済みだが model_ssl.pt が無い。resume で成果物だけ書き出す"
+else
+  echo "ok : 保存済み ${LAST_EP} / ${NUM_EPOCH}（残り ${REMAIN}）"
 fi
 
 # 5. 必要 walltime（MIN_PER_EPOCH に 30% の余裕）
@@ -71,7 +88,7 @@ echo "ok : 必要 walltime の見積り ${WALLTIME}（残り ${REMAIN} epoch x $
 # 6. 崩壊で止まったランを resume しない（Goal.yaml 方針3: 崩壊したら新しい実験番号で再実行）
 #    collapse abort / NaN abort の後は model_ssl.pt が書かれるので項目2でも止まるが、
 #    「退避すれば続けられる」と誤読されないよう、ここで理由を明示して止める。
-LAST_LINE=$(grep -h "Epoch: ${LAST_EP}," "${LOG_DIR}"/*.OU 2>/dev/null | tail -1)
+LAST_LINE=$(grep -ah "Epoch: [0-9]*, train_loss" "${LOG_DIR}"/*.OU 2>/dev/null | tail -1)
 echo "     最終行: ${LAST_LINE#*\[INFO\] }"
 if grep -aqE "Collapse detected|Non-finite train_loss" "${LOG_DIR}"/*.OU 2>/dev/null; then
   grep -ahE "Collapse detected|Non-finite train_loss" "${LOG_DIR}"/*.OU | tail -2 >&2

@@ -129,6 +129,23 @@ def train_epoch(ctx: RunContext, model, data_loader, criterion, optimizer, epoch
             ctx.logger.logger.warning(f'Clipping telemetry could not be saved: {exc}')
     return model, np.mean(train_batch_loss), np.mean(grad_norms)
 
+def atomic_torch_save(obj, path):
+    """同じディレクトリの一時ファイルへ保存してから os.replace で置き換える(途中で殺されても元が残る)。"""
+    tmp = f'{path}.tmp'
+    torch.save(obj, tmp)
+    os.replace(tmp, path)
+
+
+def write_state_meta(dir_name, completed_epochs, num_epoch):
+    """state.json: state.pt に保存済みの epoch 数(1 始まりの完了数)。resume.sh が読む。"""
+    import json
+    path = os.path.join(dir_name, 'state.json')
+    with open(f'{path}.tmp', 'w') as f:
+        json.dump({'completed_epochs': int(completed_epochs), 'num_epoch': int(num_epoch),
+                   'saved_at': time.strftime('%Y-%m-%dT%H:%M:%S')}, f)
+    os.replace(f'{path}.tmp', path)
+
+
 def restore_healthy_weights(model, early_stopping_path, dir_name, logger):
     """abort(NaN / 発散 / 崩壊 / early stop)時に model_ssl.pt へ書く重みの復元元を選ぶ。
 
@@ -256,7 +273,9 @@ def train(ctx: RunContext, model, criterion, optimizer, scheduler, early_stoppin
             train_loader.sampler.set_epoch(epoch)
         model, train_epoch_loss, grad_norm = train_epoch(
             ctx, model, train_loader, criterion, optimizer, epoch, num_epoch=num_epoch)
-        scheduler.step(epoch)
+        # 次の epoch(添字 epoch+1)の lr を入れる。旧実装の step(epoch) は 1 epoch 遅れていた(epoch e が
+        # _get_lr(e-1) で走る)。構築時に epoch 0 の値(warmup_lr_init、warmup 無しならピーク)が入っている。
+        scheduler.step(epoch + 1)
         # SimSiam: hold the predictor at a constant LR (fix-pred-lr; not decayed).
         if args.fix_pred_lr:
             for g in optimizer.param_groups:
@@ -376,11 +395,16 @@ def train(ctx: RunContext, model, criterion, optimizer, scheduler, early_stoppin
                 "early_stopping": early_stopping,
                 "train_loss": train_loss
             }
-            torch.save(state, f'{DIR_NAME}/state.pt')
+            # 一時ファイルへ書いてから os.replace(同一ディレクトリ内なので atomic)。直接上書きすると、保存中に
+            # walltime で殺されたとき直前の正常な state.pt も失い、optimizer 込みの再開ができなくなる(レビュー指摘)。
+            atomic_torch_save(state, f'{DIR_NAME}/state.pt')
+            # resume.sh が「どの epoch まで保存済みか」を 1.7GB の state.pt を読まずに知るための小さな記録。
+            # state.pt の**後**に書くので、ここにある epoch は必ず state.pt に入っている。
+            write_state_meta(DIR_NAME, completed_epochs=epoch + 1, num_epoch=num_epoch)
             # periodic model snapshots (kept, not overwritten) for trajectory analysis /
             # collapse recovery. Saves model weights only (not optimizer) as model_ep{N}.pt.
             if args.save_interval > 0 and ((epoch + 1) % args.save_interval == 0 or (epoch + 1) == num_epoch):
-                torch.save(distributed.unwrap(model).state_dict(), f'{DIR_NAME}/model_ep{epoch + 1}.pt')
+                atomic_torch_save(distributed.unwrap(model).state_dict(), f'{DIR_NAME}/model_ep{epoch + 1}.pt')
                 LOGGER.logger.info(f'saved snapshot model_ep{epoch + 1}.pt')
             LOGGER.save_logger(fileout=ctx.file_log)
         # monitor VAL loss now (fixes the previous train-loss bug). checkpoint.pt = best held-out model.

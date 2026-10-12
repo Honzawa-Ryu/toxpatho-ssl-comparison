@@ -96,9 +96,8 @@ def override_lr_after_resume(args, optimizer, scheduler, start_epoch, log):
     if hasattr(scheduler, 'warmup_steps') and getattr(scheduler, 'warmup_t', 0):
         scheduler.warmup_steps = [(v - scheduler.warmup_lr_init) / scheduler.warmup_t for v in base]
     # 再開する epoch の cosine 位置の値を、timm 自身の計算で各グループへ入れ直す
-    # (loop.py は epoch 末に scheduler.step(epoch) を呼ぶので、epoch start_epoch の開始時の値は _get_lr(start_epoch-1))。
-    if start_epoch > 0:
-        scheduler.update_groups(scheduler._get_lr(start_epoch - 1))
+    # (loop.py は epoch 末に scheduler.step(epoch + 1) を呼ぶので、epoch start_epoch の値は _get_lr(start_epoch))。
+    scheduler.update_groups(scheduler._get_lr(start_epoch))
     now = [g['lr'] for g in optimizer.param_groups]
     roles = [g['lr_role'] for g in optimizer.param_groups]
     log(f'--resume_override_lr: base lr per group -> {base} (roles {roles}); lr at epoch {start_epoch + 1}: {now}')

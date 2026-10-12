@@ -13,7 +13,7 @@
 > 実行は向こう。**コミットに「実装済み・未実行」が含まれるのは想定どおり。**
 > 詳細は [CLAUDE.md](CLAUDE.md)。
 
-最終更新: 2026-10-12（4 手法そろえ: MAE 0037（2568 epoch）/ SimSiam 0038 を定義。**実装を点検し、全手法共通の step テレメトリ `--step_log` を追加**、CPU スモーク通過。BT は 0035 の 1 本。いずれも qsub 未）
+最終更新: 2026-10-12（投入前レビューの 4 点を修正: 完全崩壊で実効ランクが最大になる / state.pt の非 atomic 保存 / lr 減衰が warmup 分はみ出し 1 epoch 遅れる / resume.sh がログで完了判定。BT 0035・MAE 0037・SimSiam 0038 は preflight 通過・qsub 未）
 
 ### 2026-09-30: Barlow Twins (ViT-B/16) の準備 — NaN 即停止を実装・学習は未投入
 
@@ -164,6 +164,26 @@ aug は他手法と共通の病理向け既定、projector 隠れ層幅は backb
 
 実験定義: `experiments/0037_20261012_mae_vitb16_step_matched/`、`experiments/0038_20261012_simsiam_vitb16_step_matched/`
 （どちらも run_slurm.sh / preflight.sh / resume.sh）。preflight 通過・**qsub 未**。
+
+### 🛠️ 投入前レビューの指摘 4 点を修正（2026-10-12）
+
+| | 指摘 | 修正 |
+|---|---|---|
+| P1 | **完全崩壊を検知できない**: 全サンプル同じ特徴だと特異値がすべて 0 なのに、各値に 1e-10 を足して正規化していたため実効ランクが最大の 768 になっていた。MAE / SimSiam は uniformity 判定を外しているので見逃す | `SSLEvaluator._effective_rank`: 中心化後の RMS が特徴の RMS の 1e-3 以下なら 0（丸め誤差だけのばらつきも 0）。`relative_spread` を eff_rank と一緒にログに出す。SimSiam の step 統計の `z_erank` も同じ判定 |
+| P1 | **保存中の強制終了で state.pt が壊れる**: 唯一の state.pt を毎 epoch 直接上書き | 一時ファイル + `os.replace`（`atomic_torch_save`）。checkpoint.pt・model_ep*.pt・model_ssl.pt も同様 |
+| P2 | **lr の減衰が学習期間を超える**: `warmup_prefix=True` で `t_initial=num_epoch` だと減衰終了が num_epoch + warmup。さらに epoch 末の `step(epoch)` で 1 epoch 遅れ。SimSiam の最終 epoch で lr がピークの約 3.1% 残る | `build_scheduler`: cosine 長を `num_epoch - warmup_t` に。loop は `step(epoch + 1)` で epoch e が `_get_lr(e)` で走る。最終 epoch の lr は SimSiam で 1.2e-4×ピーク |
+| P2 | **resume.sh が未保存の epoch を完了扱い**: epoch のログ行は state.pt 保存より前に出る | state.pt を置き換えた**後**に `state.json`（`completed_epochs`）を書き、resume.sh はこれで判定。完走 = model_ssl.pt あり かつ completed_epochs = num_epoch。model_ssl.pt があって途中なら崩壊停止として止める。state.json が無い旧ランはログの最終 epoch − 1 とみなす |
+
+⚠️ **既存のランへの影響**: DINO 0028 と BT 0029〜0034 は旧スケジュール（減衰が warmup 分はみ出す + 1 epoch 遅れ）で走った。
+DINO 0028（480 / warmup 10）の最終 epoch の lr はピークの約 0.1% で実質的な差は小さいが、**4 手法の lr スケジュールは厳密には揃っていない**。
+BT 0035 は 0034 から clip_grad に加えてこのスケジュール修正も入る（差はピーク到達が 1 epoch 早い・終盤の減衰が少し速い程度）。
+
+**比較時の注意（レビューより）**: MAE の特徴は patch token の平均（`MAEFeaturizer` / evaluator の `forward_features`）、
+他 3 手法は CLS token。表現比較・下流評価の差には特徴の取り出し方の差も含まれる。→ TODO に記録。
+
+テスト: `tests/test_scheduler_and_save.py`（コンテナ内 9 件: 完全崩壊・丸め誤差・低ランク、保存失敗で元が残る、スケジュール 4 設定）、
+resume.sh は 4 状況（ログ 160・保存 159 / 保存 160・成果物なし / 完走 / 途中停止）をスクラッチで再現して確認。
+`tests/test_collapse_guards.py` 88 項目、コンテナテスト計 40 件、3 本の CPU スモークと preflight を再実行して通過。
 
 ### 🔍 投入前の点検とログの拡充（2026-10-12）
 

@@ -442,7 +442,9 @@ class EarlyStopping:
     def save_checkpoint(self, model):
         '''Saves model when validation loss decrease.'''
         if self.save_enabled:
-            torch.save(model.state_dict(), self.path)
+            # 一時ファイル経由で置き換える(保存中に殺されても直前の checkpoint.pt が残る。abort 時の復元元)
+            torch.save(model.state_dict(), f'{self.path}.tmp')
+            os.replace(f'{self.path}.tmp', self.path)
 
     def delete_checkpoint(self):
         os.remove(self.path)
@@ -644,6 +646,8 @@ def summarize_model(model, summary, outdir, lst_name=['summary.txt', 'model.pt']
             writer.write(repr(summary))
     except ModuleNotFoundError:
         print('!! CAUTION: no torchinfo and model summary was not saved !!')
-    torch.save(model.state_dict(), f'{outdir}/{lst_name[1]}')
+    # 一時ファイル経由(model_ssl.pt は「学習完了」の印として resume を止めるので、壊れた途中のファイルを残さない)
+    torch.save(model.state_dict(), f'{outdir}/{lst_name[1]}.tmp')
+    os.replace(f'{outdir}/{lst_name[1]}.tmp', f'{outdir}/{lst_name[1]}')
 
 

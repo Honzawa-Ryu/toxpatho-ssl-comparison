@@ -71,7 +71,7 @@ class TestResumeOverrideLr(unittest.TestCase):
         msgs = []
         now = override_lr_after_resume(args, opt, sch, start_epoch=64, log=msgs.append)
         self.assertEqual(sch.base_values, [1.6, 0.0096])
-        self.assertAlmostEqual(now[0], 1.6 * sch._get_lr(63)[0] / 1.6, places=9)
+        self.assertAlmostEqual(now[0], sch._get_lr(64)[0], places=9)
         self.assertLess(now[1], 0.0097)
         self.assertAlmostEqual(now[1] / now[0], 0.0096 / 1.6, places=9, msg="同じ cosine 位置で比が lr_bias/lr")
         sch.step(64)

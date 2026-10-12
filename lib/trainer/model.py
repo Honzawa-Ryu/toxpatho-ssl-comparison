@@ -57,6 +57,14 @@ def _wd_groups(args, groups):
     return out
 
 
+def build_scheduler(optimizer, num_epoch, warmup_t, lr_min, warmup_lr_init):
+    """epoch 単位の warmup + cosine。loop.py は epoch e の末に step(e + 1) を呼び、epoch e は _get_lr(e) で走る。
+    warmup を含めて num_epoch で減衰が終わる(tests/test_scheduler_and_save.py)。"""
+    return CosineLRScheduler(
+        optimizer, t_initial=max(1, num_epoch - warmup_t), lr_min=lr_min,
+        warmup_t=warmup_t, warmup_lr_init=warmup_lr_init, warmup_prefix=True)
+
+
 # prepare model
 def prepare_model(
         ctx: RunContext,
@@ -212,9 +220,11 @@ def prepare_model(
         print(f"weight decay {weight_decay:.3g}{'->' + format(args.weight_decay_end, '.3g') if args.weight_decay_end > 0 else ''}: "
               f"decayed {n_decayed} tensors / exempt (bias & ndim<=1) {n_exempt} tensors{note}")
 
-    scheduler = CosineLRScheduler(
-        optimizer, t_initial=num_epoch, lr_min=args.lr_min,
-        warmup_t=args.warmup_t, warmup_lr_init=args.warmup_lr_init, warmup_prefix=True)
+    # warmup_prefix=True の timm は t_initial を「warmup の後の」cosine の長さとして扱う。t_initial=num_epoch だと
+    # 減衰の終わりが num_epoch + warmup_t になり、最終 epoch でも lr がピークの数 % 残っていた(SimSiam 160/16 で 3.1%。
+    # レビュー指摘 2026-10-12)。warmup を含めて num_epoch で終わるよう、cosine の長さは num_epoch - warmup_t にする。
+    # ⚠️ DINO 0028 / BT 0029〜0034 は旧設定(減衰が warmup 分はみ出す + 1 epoch 遅れ)で走っている。
+    scheduler = build_scheduler(optimizer, num_epoch, args.warmup_t, args.lr_min, args.warmup_lr_init)
     early_stopping = sslmodel.utils.EarlyStopping(
         patience=patience, delta=delta, path=f'{ctx.dir_name}/checkpoint.pt',
         save_enabled=distributed.is_main_process(),
