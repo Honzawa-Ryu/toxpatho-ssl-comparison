@@ -60,11 +60,12 @@ class TestBf16Hazard(unittest.TestCase):
         torch.manual_seed(0)
         return torch.randn(256, 64) * spread + 300.0
 
-    def test_bf16_collapses_std_to_zero_and_loss_is_nan(self):
+    def test_bf16_collapses_std_to_zero_but_loss_stays_finite(self):
         z = self._offset_z().bfloat16()          # bf16 の刻みは 256〜512 で 2 → 全値が 300 に丸まる
         self.assertTrue(bool((z.std(0) == 0).all()), "オフセット 300 では bf16 の std が 0 になるはず")
         loss = barlowtwins.BarlowTwinsLoss(fp32=False)(z, z)
-        self.assertTrue(torch.isnan(loss).item(), "std==0 で 0/0 になり損失が NaN になる")
+        # 2026-10-12 まで: std に eps が無く 0/0 で NaN になっていた。公式(BN の eps 1e-5)と同じく eps を足して有限
+        self.assertTrue(torch.isfinite(loss).item(), "std==0 でも eps で有限(旧実装は NaN)")
 
     def test_moderate_spread_is_only_coarsely_quantized_not_zero(self):
         # 比 600 ではまだ std は 0 にならない(= NaN にならない)が、値は数段階にしか分かれない。
@@ -77,12 +78,15 @@ class TestBf16Hazard(unittest.TestCase):
         loss = barlowtwins.BarlowTwinsLoss(fp32=True)(z, z)
         self.assertTrue(torch.isfinite(loss).item())
 
-    def test_fp32_flag_rescues_what_bf16_input_cannot(self):
-        # 損失の fp32 化は「bf16 に丸められた z」を元に戻せない。ヘッドごと fp32 にする
-        # 必要がある理由(BarlowTwins.fp32_head)を明示するテスト。
+    def test_fp32_flag_cannot_restore_rounded_input(self):
+        # 損失の fp32 化は「bf16 に丸められた z」の情報を元に戻せない(std は 0 のまま。損失は eps で有限だが
+        # その次元は学習信号を失う)。ヘッドごと fp32 にする必要がある理由(BarlowTwins.fp32_head)を示すテスト。
         z_bf16 = self._offset_z().bfloat16()
-        loss = barlowtwins.BarlowTwinsLoss(fp32=True)(z_bf16, z_bf16)
-        self.assertTrue(torch.isnan(loss).item(), "丸め済みの入力は損失側で fp32 化しても救えない")
+        crit = barlowtwins.BarlowTwinsLoss(fp32=True, collect_stats=True)
+        loss = crit(z_bf16, z_bf16)
+        self.assertTrue(torch.isfinite(loss).item())
+        stats = dict(zip(bt_telemetry.STAT_NAMES, crit.last_stats.tolist()))
+        self.assertEqual(stats["n_zero_std"], 128.0, "64 次元 x 2 ビューすべて std==0 のまま")
 
 
 class TestFp32Head(unittest.TestCase):

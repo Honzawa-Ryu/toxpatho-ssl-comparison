@@ -13,7 +13,7 @@
 > 実行は向こう。**コミットに「実装済み・未実行」が含まれるのは想定どおり。**
 > 詳細は [CLAUDE.md](CLAUDE.md)。
 
-最終更新: 2026-10-12（投入前レビューの 4 点を修正: 完全崩壊で実効ランクが最大になる / state.pt の非 atomic 保存 / lr 減衰が warmup 分はみ出し 1 epoch 遅れる / resume.sh がログで完了判定。BT 0035・MAE 0037・SimSiam 0038 は preflight 通過・qsub 未）
+最終更新: 2026-10-12（追加レビュー 3 点を修正: **BT 損失の標準化を global batch + eps に**（旧実装は GPU ごと・eps なし）、崩壊検知の eff_rank を損失のゲートから独立に。DINO 0028 はやり直し不要と判断。BT 0035・MAE 0037・SimSiam 0038 は qsub 未）
 
 ### 2026-09-30: Barlow Twins (ViT-B/16) の準備 — NaN 即停止を実装・学習は未投入
 
@@ -164,6 +164,26 @@ aug は他手法と共通の病理向け既定、projector 隠れ層幅は backb
 
 実験定義: `experiments/0037_20261012_mae_vitb16_step_matched/`、`experiments/0038_20261012_simsiam_vitb16_step_matched/`
 （どちらも run_slurm.sh / preflight.sh / resume.sh）。preflight 通過・**qsub 未**。
+
+### 🛠️ 追加レビュー 3 点（BT 損失・崩壊検知）を修正（2026-10-12）
+
+| | 指摘 | 修正 |
+|---|---|---|
+| P1・BT | **分散時の標準化が global batch と一致しない**: GPU ごとの 256 枚で mean/std を取ってから c を集約。rank ごとに別のオフセット・スケールで割るので 2048 枚での標準化と一致しない（数値例で相関の符号まで変わる）。公式は損失直前も BN(affine=False) を SyncBN 化 | `BarlowTwinsLoss._standardize`: 各 rank の Σz・Σz² と枚数を **autograd 対応の all_reduce**（`torch.distributed.nn.functional`）で集約し、global の平均・biased 分散で標準化（= SyncBN。統計にも勾配が通る）。統計は fp32 |
+| P1・BT | **std が 0 で NaN**: std に eps が無く、1 次元でも値が一定（bf16 の丸めでも起きる）だと 0/0 | 公式の BN と同じく分散に eps 1e-5。`last_stats` の std は eps 無しのまま（std==0 の次元を数えられる） |
+| P2・全手法 | **損失が低いとランク崩壊を無視する**: `CollapseMonitor.update` は loss < 0.9×ln(out_dim) のとき eff_rank 判定も無効にしていた（実効ランク 1・loss 1 を 5 回でも止まらない） | eff_rank は損失のゲートと独立に判定。uniformity だけゲートを残す（out_dim の大きいヘッド出力で健全でも 0 付近になる実例があるため） |
+
+**やり直しの要否**:
+- **DINO 0028: やり直し不要。** 3 点目は監視側の不具合で学習には影響しない。0028 の監視値は最終 eff_rank 557.8・loss 1.0225 で、
+  ランク崩壊は起きていない（見逃したものは無い）。DINO の teacher EMA・center の全 rank 集約・crop 間の損失はレビューで問題なし。
+  lr スケジュールの差（前節）は最終 epoch でピークの約 0.1% で実質的な影響は小さい。比較時に注記する。
+- **BT: 完走したランは無いので、やり直しではなく 0035 にそのまま反映。** ただし **0029〜0034 の発散の診断（bias/LN の生勾配スパイク）は旧損失の下で得たもの**で、
+  ローカル標準化や eps 無しが発散の一因だった可能性は否定できない。0035 の clip_grad 1.0 / lr_bias 1/4 は、修正後の損失では不要かもしれない。
+
+検証: `tests/test_bt_global_standardize.py`（gloo 2 プロセス・CPU で、損失と各 rank の勾配が 1 プロセス全バッチの公式式と一致。
+rank 間で分布をずらした入力で確認。std==0 の次元でも有限）、既存の BT テストのうち旧挙動（NaN になる）を前提にしていた 2 件を新挙動に更新、
+`tests/test_collapse_guards.py` 90 項目（レビューの再現例「実効ランク 1・uniformity 0・loss 1 × 5 回」で停止、健全な 0026 の値では停止しない）、
+コンテナテスト計 43 件、BT の CPU スモーク、0035 / 0036 の preflight（修正後のコードであることを点検）。
 
 ### 🛠️ 投入前レビューの指摘 4 点を修正（2026-10-12）
 

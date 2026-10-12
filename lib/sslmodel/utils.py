@@ -594,8 +594,12 @@ class CollapseMonitor:
                     and uniformity > self.uniformity_threshold):
                 reasons.append(f'uniformity {uniformity:.4f} > {self.uniformity_threshold} '
                                f'— all samples collapsed onto one point')
-            if _valid(effective_rank) and effective_rank < self.rank_threshold:
-                reasons.append(f'effective_rank {effective_rank:.2f} < {self.rank_threshold}')
+        # effective_rank は損失のゲートに関係なく独立に判定する(レビュー指摘 2026-10-12)。損失が低くても
+        # 表現がランク崩壊していることはあり、損失だけでは健全性を保証できない。backbone 特徴(768 次元)の
+        # 実効ランクが 5 未満は極端な値で(健全な DINO 0026 でも 237、0028 で 557.8)、誤停止の余地は小さい。
+        # uniformity だけをゲートするのは、out_dim の大きいヘッド出力で健全でも 0 付近になる実例があるため(下の経緯)。
+        if _valid(effective_rank) and effective_rank < self.rank_threshold:
+            reasons.append(f'effective_rank {effective_rank:.2f} < {self.rank_threshold}')
 
         if reasons:
             self.counter += 1

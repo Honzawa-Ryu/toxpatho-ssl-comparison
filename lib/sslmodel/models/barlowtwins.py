@@ -147,15 +147,42 @@ class BarlowTwinsLoss(torch.nn.Module):
         with torch.amp.autocast(device_type=z_a.device.type, enabled=False):
             return self._compute(z_a.float(), z_b.float())
 
+    # 公式(facebookresearch/barlowtwins main.py)は損失の直前を `nn.BatchNorm1d(D, affine=False)` で標準化し、
+    # モデル全体を SyncBN 化する = **global batch の平均・分散(biased)+ eps 1e-5**。
+    BN_EPS = 1e-5
+
+    def _standardize(self, z: torch.Tensor):
+        """バッチ方向の標準化。分散時は全 rank の統計(global batch)で行い、勾配も通す(= SyncBN と同じ)。
+
+        旧実装(〜2026-10-12)は各 GPU のローカルバッチ(256)で `(z - mean) / std` してから c を集約していた。
+        これは global batch(2048)での標準化と一致せず(rank ごとに別のオフセット・スケールで割る)、
+        std に eps も無かったので 1 次元でも値が一定になると 0/0 で NaN になった(レビュー指摘 2026-10-12)。
+        統計は autocast に関係なく fp32 で取る(公式も AMP 下の BN は fp32)。
+        """
+        z = z.float()
+        n_local = z.new_tensor(float(z.size(0)))
+        s1, s2 = z.sum(0), (z * z).sum(0)
+        if self.gather_distributed and dist.is_initialized() and dist.get_world_size() > 1:
+            import torch.distributed.nn.functional as dist_fn   # autograd 対応の all_reduce(backward も集約)
+            stats = dist_fn.all_reduce(torch.cat([s1, s2, n_local.view(1)]))
+            s1, s2, n = stats[: z.size(1)], stats[z.size(1): 2 * z.size(1)], stats[-1]
+        else:
+            n = n_local
+        mean = s1 / n
+        var = (s2 / n - mean * mean).clamp_min(0)   # biased(BN と同じ)
+        # 割るのは eps 込み。統計(last_stats)には eps 無しの std を返す(std==0 の次元を数えられるように)
+        return (z - mean) / (var + self.BN_EPS).sqrt(), mean, var.sqrt()
+
     def _compute(self, z_a: torch.Tensor, z_b: torch.Tensor) -> torch.Tensor:
 
         device = z_a.device
 
-        # normalize repr. along the batch dimension
-        mean_a, std_a = z_a.mean(0), z_a.std(0)
-        mean_b, std_b = z_b.mean(0), z_b.std(0)
-        z_a_norm = (z_a - mean_a) / std_a # NxD
-        z_b_norm = (z_b - mean_b) / std_b # NxD
+        # normalize repr. along the batch dimension (global batch, BN 相当)
+        z_a_norm, mean_a, std_a = self._standardize(z_a)
+        z_b_norm, mean_b, std_b = self._standardize(z_b)
+        if not self.fp32:
+            # 相関行列の matmul は従来どおり autocast(bf16)に任せる(公式も AMP 下の matmul は半精度)
+            z_a_norm, z_b_norm = z_a_norm.to(z_a.dtype), z_b_norm.to(z_b.dtype)
         N = z_a.size(0)
         D = z_a.size(1)
 
@@ -192,7 +219,7 @@ class BarlowTwinsLoss(torch.nn.Module):
         """z のバッチ統計を `last_stats`(float32, 長さ7)に残す。NaN の原因切り分け用。
 
         順に: z_std_min / n_zero_std / z_mean_abs_max / z_ratio_max / c_diag_mean / on_diag / off_diag。
-        std・mean は**各 rank のローカルバッチ**の値(c は rank 間で集約済みなので後半3つは全体)。
+        std・mean は標準化に実際に使った値(2026-10-12 以降は global batch・eps 込み。それ以前のログはローカルバッチ・eps なし)。
         z_ratio_max = max |mean| / std。bf16 が刻みを落とす目安(オフセット/ばらつき比)で、
         std==0 の次元があると極端に大きな値になる。std はこのクラスが実際に使った精度で
         計算した値をそのまま float 化して見る(bf16 経路なら bf16 の std)。

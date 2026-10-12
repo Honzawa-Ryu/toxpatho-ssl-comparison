@@ -162,10 +162,18 @@ m.update(237.18, uniformity=-0.0108, train_loss=LN65536 * 0.95)
 m.update(237.18, uniformity=-0.0108, train_loss=LN65536 * 0.95)
 _check("損失が天井付近なら uniformity が補助指標として効く",
        m.collapsed and "one point" in m.reason)
-# eff_rank も同じゲートに従うこと（損失が健全なら単独で止めない）
+# eff_rank は損失のゲートに関係なく独立に判定する（2026-10-12 レビュー指摘で仕様変更。旧仕様は
+# 「損失が健全なら eff_rank 単独では止めない」で、実効ランク 1・loss 1 を 5 回与えても止まらなかった）
 m = CollapseMonitor(rank_threshold=5.0, patience=1, out_dim=65536)
 m.update(1.5, uniformity=-0.9, train_loss=2.8539)
-_check("損失が下降中なら eff_rank だけでも発火しない", not m.collapsed)
+_check("損失が下降中でも eff_rank < 閾値なら発火する", m.collapsed and "effective_rank" in m.reason)
+m = CollapseMonitor(rank_threshold=5.0, patience=5, out_dim=65536)
+for _ in range(5):
+    m.update(1.0, uniformity=0.0, train_loss=1.0)
+_check("実効ランク 1・uniformity 0・loss 1 を 5 回で停止する（レビューの再現例）", m.collapsed)
+m = CollapseMonitor(rank_threshold=5.0, patience=1, out_dim=65536)
+m.update(237.18, uniformity=-0.0108, train_loss=2.8539)
+_check("健全な 0026 の値（eff_rank 237, uniformity -0.0108, loss 2.85）では発火しない", not m.collapsed)
 # 一次指標は補助指標のゲートに関係なく単独で発火すること
 m = CollapseMonitor(rank_threshold=5.0, patience=1, out_dim=65536)
 m.update(237.18, uniformity=-0.9, train_loss=LN65536)

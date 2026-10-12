@@ -68,6 +68,8 @@ grep -q -- "--bt_step_log" <<<"${CODE}" || fail "--bt_step_log が無い"
 grep -q -- "--resume_override_lr" <<<"${CODE}" && fail "--resume_override_lr が付いている(診断ラン専用。本番では付けない)"
 grep -q "all(p.ndim <= 1 for p in g\['params'\])" "${PROJECT_ROOT}/lib/trainer/optim.py" || fail "optim.py が 0032 のバグ修正前"
 grep -q "restore_healthy_weights" "${PROJECT_ROOT}/lib/trainer/loop.py" || fail "loop.py が P2 修正前"
+grep -q "dist_fn.all_reduce(torch.cat(\[s1, s2" "${PROJECT_ROOT}/lib/sslmodel/models/barlowtwins.py" || fail "BT 損失が global batch 標準化(2026-10-12 修正)より前"
+grep -q "t_initial=max(1, num_epoch - warmup_t)" "${PROJECT_ROOT}/lib/trainer/model.py" || fail "lr スケジュールが 2026-10-12 修正より前"
 echo "ok : bias/LN も LARS 適応(--lars_exclude_bias_bn なし)・wd は除外 / clip なし / --bt_step_log / override なし"
 # 9. 停止日までの余裕(1600 epoch ≈ 60.5h + 2本目のキュー待ち)
 echo "     Miyabi 停止: 2026-10-28 09:00。$(date '+%m/%d %H:%M') 時点で残り $(( ( $(date -d '2026-10-28 09:00' +%s) - $(date +%s) ) / 3600 )) 時間。必要 ≈ 61h + キュー待ち ×2"
