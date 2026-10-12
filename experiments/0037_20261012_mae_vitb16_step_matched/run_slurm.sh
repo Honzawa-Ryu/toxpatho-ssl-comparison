@@ -7,10 +7,11 @@
 #
 # ■ step 数の合わせ方(DINO 0028 / BT 0029 と同じ考え方)
 #   MAE 論文(He et al. 2022)の ViT-B は「本文の最終結果 1600 epoch / アブレーションと公式 PRETRAIN.md の
-#   推奨コマンド 800 epoch」と 2 つある。**ここは 800 epoch(公式 PRETRAIN.md の推奨・論文アブレーションの既定)に
-#   合わせる**(1600 は計算が 2 倍で、Miyabi 停止(10/28)前に収まる保証が無い)。「論文準拠」と一語で書かない。
-#     論文: 1,281,167 枚 / 4096 = 312.8 → 313 step/epoch × 800 = 250,400 step
-#     本データ: train 800,000 枚 / 4096 = 195 step/epoch(drop_last) → 250,400 / 195 = **1284 epoch**
+#   推奨コマンド 800 epoch」と 2 つある。**ここは本文の最終結果の 1600 epoch に合わせる**(ユーザー決定 2026-10-12:
+#   resume できるので目標は元論文にそろえる。Miyabi 停止をまたいでも停止明けに再開すればよい)。
+#   「論文準拠」と一語で書かない(公式 PRETRAIN.md の推奨は 800)。
+#     論文: 1,281,167 枚 / 4096 = 312.8 → 313 step/epoch × 1600 = 500,800 step
+#     本データ: train 800,000 枚 / 4096 = 195 step/epoch(drop_last) → 500,800 / 195 = **2568 epoch**
 #     warmup: 論文 40 epoch × 313 = 12,520 step → **64 epoch**(12,480 step)
 #
 # ■ 公式(main_pretrain.py / PRETRAIN.md)にそろえた点
@@ -24,9 +25,9 @@
 #      (MAE の特徴は一様に散る目的で学習しないので、健全でも 0 付近になりうる。誤停止を避ける)。
 #
 # ■ コスト(**見積り。実測なし**): andre01 の旧 MAE ViT-B(bs 256, 3.1 it/s ≈ 800 枚/s/GPU)から GH200 で
-#   2〜3 倍と仮定 → 1600〜2400 枚/s/GPU × 8 = 1.3〜1.9 万枚/s → 1 epoch(800k)≈ 0.7〜1.0 分、1284 epoch ≈ 15〜22h
-#   ≈ 120〜180 ノード時間(+ データローダ律速なら延びる)。48h 枠に収まる見込みだが、
-#   切れたら resume.sh。1 本目の elapsed_time で resume.sh の MIN_PER_EPOCH を更新すること。
+#   2〜3 倍と仮定 → 1600〜2400 枚/s/GPU × 8 = 1.3〜1.9 万枚/s → 1 epoch(800k)≈ 0.7〜1.0 分、2568 epoch ≈ 30〜45h
+#   ≈ 240〜360 ノード時間(+ データローダ律速なら延びる)。48h 枠で切れたら resume.sh で続きを投入する
+#   (Miyabi 停止をまたぐ場合も停止明けに resume.sh)。1 本目の elapsed_time で resume.sh の MIN_PER_EPOCH を更新すること。
 #   VRAM: A6000 で bs 512 が 28.6GB(0013 vram_probe)、GH200 120GB では十分余裕。
 #
 # 投入前提:
@@ -85,7 +86,7 @@ RUN_COMMAND="python ${PYTHON_PATH} \
     --optimizer adamw --beta2 0.95 --lr 2.4e-3 --weight_decay 0.05 \
     --batch_size 512 \
     --color_plob 0.0 --blur_plob 0.0 --solar_plob 0.0 \
-    --num_epoch 1284 --warmup_t 64 --lr_min 0.0 \
+    --num_epoch 2568 --warmup_t 64 --lr_min 0.0 \
     --collapse_early_stop --collapse_ignore_uniformity --collapse_loss_rebound 2.0 \
     --rank_monitor_interval 5 --save_interval 5 --resume"
 

@@ -125,7 +125,7 @@
       注意: 約2〜2.5倍/ep→100epは72h枠超過の可能性、state.pt毎ep保存でresume前提。投入コマンド:
       `sbatch experiments/20260713_000001_tggate_vitl16_mae/run_slurm.sh`
 - [ ] **MAE / SimSiam を論文の step 数にそろえて事前学習**（2026-10-12 定義・preflight 通過・qsub 未）
-      `0037_20261012_mae_vitb16_step_matched`（1284 epoch = 論文 800 ep の step 数、8 ノード、見積り 120〜180 ノード時間）
+      `0037_20261012_mae_vitb16_step_matched`（2568 epoch = 論文本文 1600 ep の step 数、8 ノード、見積り 240〜360 ノード時間。停止をまたいだら停止明けに resume）
       `0038_20261012_simsiam_vitb16_step_matched`（160 epoch = 論文 100 ep の step 数、2 ノード、見積り 48 ノード時間）
       詳細は PROJECT_STATUS「🧩 MAE 0037 / SimSiam 0038」。旧定義 0013/0014/0016/0018（100 epoch）は使わない。
 - [ ] 本命4手法（SimSiam / Barlow Twins / MAE / DINO）の同一条件・事前学習

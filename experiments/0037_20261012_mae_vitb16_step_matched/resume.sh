@@ -21,7 +21,7 @@ PROJECT_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 OUT="${PROJECT_ROOT}/outputs/${EXP_NAME}"
 LOG_DIR="${PROJECT_ROOT}/logs/${EXP_NAME}"
 SCRIPT="${PROJECT_ROOT}/experiments/${EXP_NAME}/run_slurm.sh"
-NUM_EPOCH=1284
+NUM_EPOCH=2568
 MIN_PER_EPOCH="${MIN_PER_EPOCH:-1.0}"   # ⚠️ 見積り(実測なし)。1 本目のログの elapsed_time で上書きすること
 SUBMIT=0
 [ "${1:-}" = "--submit" ] && SUBMIT=1
