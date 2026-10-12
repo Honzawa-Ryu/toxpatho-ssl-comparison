@@ -99,7 +99,9 @@
       **本番 `0034_20261009_bt_vitb16_lrbias_quarter`（job 3516219）は ep84 で発散・ep85 で NaN**（0029 より 19 epoch 遅いだけ、約 27 ノード時間）。
       起点は同型（bias/LN の生勾配スパイク、blocks.2.norm2.weight）。gn_raw は ep30 から単調増加し、スパイク × lr_bias ≈ 0.4 が臨界。
       **0035 = 0034 + `--clip_grad 1.0`（生勾配グループの更新幅を上から抑える。LARS 側には効かない。3.0 は momentum 込みで安全側でないため 1.0）を定義・preflight 通過・qsub 未。**
-      0036 = bias/LN にも LARS 適応（`--lars_exclude_bias_bn` を外す）は定義済みだが **投入しない**（BT は 0035 の 1 本に絞る。0035 が駄目なときの次の候補）。Miyabi 停止後の別実験: schedule-free（RAdam 等）optimizer。
+      **2026-10-12 更新: BT は 0039（公式 lr のまま・修正後の損失だけ、clip なし）を投入する。** レビューで BT 損失の標準化が
+      GPU ごと・eps なしだったと判明し（修正済み）、0029〜0034 の発散はその影響を受けていた可能性があるため。
+      0039 が壊れたら 0035（lr_bias 1/4 + clip 1.0）、それも駄目なら 0036（bias/LN にも LARS 適応）。Miyabi 停止後の別実験: schedule-free（RAdam 等）optimizer。
       ⚠️ 停止まで 406h（10/11）。必要 61h + キュー待ち ×2。今回で決めないと間に合わない。
       方針: 0033 は診断のみ（済）。**0034 を `--lr_bias 0.0096` でゼロから 1600 epoch**（完成品。10/20 ごろまでに投入。
       ⚠️ Miyabi は 10/28 09:00 停止。1.91 分/epoch × 1600 ≈ 51h → 48h 枠 ×2 本、resume 前提）。

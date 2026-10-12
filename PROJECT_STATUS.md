@@ -13,7 +13,7 @@
 > 実行は向こう。**コミットに「実装済み・未実行」が含まれるのは想定どおり。**
 > 詳細は [CLAUDE.md](CLAUDE.md)。
 
-最終更新: 2026-10-12（追加レビュー 3 点を修正: **BT 損失の標準化を global batch + eps に**（旧実装は GPU ごと・eps なし）、崩壊検知の eff_rank を損失のゲートから独立に。DINO 0028 はやり直し不要と判断。BT 0035・MAE 0037・SimSiam 0038 は qsub 未）
+最終更新: 2026-10-12（BT は **0039 = 公式 lr のまま修正後の損失だけ**で出すことに決定（0035 は投入しない）。BT 0039・MAE 0037・SimSiam 0038 をまとめて投入する（preflight 通過）
 
 ### 2026-09-30: Barlow Twins (ViT-B/16) の準備 — NaN 即停止を実装・学習は未投入
 
@@ -164,6 +164,22 @@ aug は他手法と共通の病理向け既定、projector 隠れ層幅は backb
 
 実験定義: `experiments/0037_20261012_mae_vitb16_step_matched/`、`experiments/0038_20261012_simsiam_vitb16_step_matched/`
 （どちらも run_slurm.sh / preflight.sh / resume.sh）。preflight 通過・**qsub 未**。
+
+### 🚀 まとめて投入: BT 0039 / MAE 0037 / SimSiam 0038（2026-10-12 決定）
+
+ユーザー決定: **BT は公式どおりの lr 設定（1.6 / 0.0384、bias/LN は LARS・wd 除外、clip なし）で、修正後の損失だけを入れた 0039 を出す。**
+旧損失（GPU ごとの標準化・eps なし）が 0029〜0034 の発散の一因だった可能性があり、逸脱（lr_bias 1/4・clip）を足す前に確かめる。
+壊れたら 0035（lr_bias 1/4 + clip 1.0、修正後の損失）へ切り替える。MAE / SimSiam も一発で通る前提ではなく、
+3 本まとめて投入して壊れたものから直す方針（「まとめて爆散させるつもりで」）。
+
+| | 本数・規模 | 最初の判定点 |
+|---|---|---|
+| BT 0039 | 8 ノード、1600 epoch、≈485 ノード時間 | 0029 は ep65、0034 は ep84 で発散 → **ep85〜100 を越えるか**（約 4h） |
+| MAE 0037 | 8 ノード、2568 epoch、≈240〜360（実測なし） | 1 epoch の実測時間で resume.sh を更新。損失の単調減少 |
+| SimSiam 0038 | 2 ノード、160 epoch、≈48 | warmup 明け（ep16）前後の `z_erank` / `cos_zz` と 5 epoch ごとの eff_rank |
+
+`experiments/0039_20261012_bt_vitb16_official_fixedloss/`（run_slurm.sh / preflight.sh / resume.sh）。preflight は公式 lr・clip なし・
+修正後の損失（global 標準化 + eps）とスケジュールであることを点検する。
 
 ### 🛠️ 追加レビュー 3 点（BT 損失・崩壊検知）を修正（2026-10-12）
 
