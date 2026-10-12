@@ -225,7 +225,36 @@ class SimSiam:
         x1, x2 = data[0].to(self.DEVICE), data[1].to(self.DEVICE) # put data on GPU
         p1, p2, z1, z2 = model(x1=x1, x2=x2) # forward
         loss = 0.5 * (criterion(z1, p2) + criterion(z2, p1))
+        if getattr(criterion, 'collect_stats', False):
+            # --step_log: 崩壊の step 単位テレメトリ(lib/trainer/bt_telemetry.py SIMSIAM_STAT_NAMES)。
+            # 学習には影響しない(no_grad・detach)。rank0 のローカルバッチの値。
+            criterion.last_stats = self._stats(p1, p2, z1, z2)
         return loss
+
+    @staticmethod
+    @torch.no_grad()
+    def _stats(p1, p2, z1, z2):
+        z = torch.cat([z1, z2]).float()
+        p = torch.cat([p1, p2]).float().detach()
+        d = z.shape[1]
+        zn = nn.functional.normalize(z, dim=1)
+        pn = nn.functional.normalize(p, dim=1)
+        cos = nn.functional.cosine_similarity
+
+        def erank(x):
+            sv = torch.linalg.svdvals(x - x.mean(0))
+            q = sv / sv.sum().clamp_min(1e-12)
+            return torch.exp(-(q * torch.log(q.clamp_min(1e-12))).sum())
+
+        return torch.stack([
+            zn.std(0).mean() * d ** 0.5,
+            z.std(0).min(),
+            0.5 * (cos(p1.float(), z2.float(), dim=1).mean() + cos(p2.float(), z1.float(), dim=1).mean()),
+            cos(z1.float(), z2.float(), dim=1).mean(),
+            pn.std(0).mean() * d ** 0.5,
+            erank(zn),
+            erank(pn),
+        ])
 
 class WSL:
     def __init__(self, DEVICE="cpu"):

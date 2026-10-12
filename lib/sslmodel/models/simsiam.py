@@ -73,6 +73,10 @@ class SimSiam(nn.Module):
 
 class NegativeCosineSimilarity(torch.nn.Module):
     """Implementation of the Negative Cosine Simililarity"""
+    # --step_log 用(lib/sslmodel/sslutils.py SimSiam.calc_loss が last_stats を入れる)。
+    # state.pt から復元した旧 criterion にも既定値があるようクラス属性で持つ。
+    collect_stats = False
+    last_stats = None
     def __init__(self, dim: int = 1, eps: float = 1e-8) -> None:
         """Same parameters as in torch.nn.CosineSimilarity
         Args:

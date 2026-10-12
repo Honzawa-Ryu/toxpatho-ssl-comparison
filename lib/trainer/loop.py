@@ -20,7 +20,8 @@ from lib.trainer import distributed
 from lib.trainer.context import RunContext
 from lib.trainer.data import prepare_data
 from lib.trainer.clip_logging import write_epoch as write_clip_epoch
-from lib.trainer.bt_telemetry import write_epoch as write_bt_epoch, GradGroupProbe, write_param_names
+from lib.trainer.bt_telemetry import (write_epoch as write_bt_epoch, GradGroupProbe, write_param_names,
+                                     STAT_NAMES as BT_STAT_NAMES, SIMSIAM_STAT_NAMES)
 
 
 # train epoch
@@ -34,7 +35,10 @@ def train_epoch(ctx: RunContext, model, data_loader, criterion, optimizer, epoch
     clip_norms = [] if clip_grad > 0 and distributed.is_main_process() else None
     # Barlow Twins の step 単位テレメトリ(--bt_step_log)。rank0 のローカルバッチの統計を貯め、
     # epoch 末に1回だけ host へ転送して書く(bt_telemetry.py)。学習の挙動には影響しない。
-    bt_stats = [] if getattr(criterion, 'collect_stats', False) and distributed.is_main_process() else None
+    # --step_log(全手法)/ --bt_step_log(旧名)で有効。MAE は criterion を持たないので統計は無く、損失と勾配だけ。
+    step_log = (getattr(ctx.args, 'step_log', False) or getattr(ctx.args, 'bt_step_log', False)
+                or getattr(criterion, 'collect_stats', False))
+    bt_stats = [] if step_log and distributed.is_main_process() else None
     # グループ別 grad_norm(重み/bias・LN, backbone/head)と上位テンソル。0030 で「起点は勾配の急増」
     # まで絞れたが、どのグループが先に跳ねたかが合計ノルムからは分からなかった(bt_telemetry.py)。
     bt_probe = GradGroupProbe(model) if bt_stats is not None else None
@@ -111,10 +115,13 @@ def train_epoch(ctx: RunContext, model, data_loader, criterion, optimizer, epoch
     if bt_stats is not None:
         try:
             write_param_names(ctx.dir_name, bt_probe.names)
+            is_bt = ctx.args.ssl_name == 'barlowtwins'
             write_bt_epoch(ctx.dir_name, epoch + 1, train_batch_loss, grad_norms, bt_stats, first_nonfinite,
-                           groups=bt_probe.rows())
+                           groups=bt_probe.rows(),
+                           stat_names=BT_STAT_NAMES if is_bt else SIMSIAM_STAT_NAMES,
+                           prefix='bt_steps' if is_bt else 'steps')
         except OSError as exc:
-            ctx.logger.logger.warning(f'BT step telemetry could not be saved: {exc}')
+            ctx.logger.logger.warning(f'step telemetry could not be saved: {exc}')
     if clip_norms is not None:
         try:
             write_clip_epoch(ctx.dir_name, epoch + 1, clip_grad, clip_norms, grad_norms)
@@ -235,6 +242,13 @@ def train(ctx: RunContext, model, criterion, optimizer, scheduler, early_stoppin
     if hasattr(criterion, 'set_schedule'):
         criterion.set_schedule(len(train_loader))
     train_loss = list(train_loss) if train_loss is not None else list()
+    if args.fix_pred_lr:
+        # SimSiam fix-pred-lr: timm の scheduler は構築時に全グループを warmup_lr_init にするので、
+        # epoch 末の掛け直し(下)だけでは最初の epoch の predictor が 1e-5 で走る。最初から固定値にする
+        # (公式 main_simsiam.py は predictor を常に init_lr)。
+        for g in optimizer.param_groups:
+            if g.get('fix_lr'):
+                g['lr'] = args.lr
     for epoch in range(start_epoch, num_epoch):
         # DistributedSampler(world_size>1のみ設定される。lib/trainer/data.py)は
         # epochごとにset_epochしないと全epochで同じrank分割・同じシャッフルになるため必須。
@@ -273,10 +287,13 @@ def train(ctx: RunContext, model, criterion, optimizer, scheduler, early_stoppin
             teacher_state += f', teacher_temp: {criterion.teacher_temp:.4f}'
         # LayerNormゲイン平均: weight decayによるbackbone消滅の早期検知用(毎epoch)
         ln_gain = norm_gain_mean(model)
+        # グループごとに lr が違う(BT の bias/LN、SimSiam の predictor)ときは全グループの lr も残す
+        group_lrs = sorted({round(g['lr'], 10) for g in optimizer.param_groups})
+        lr_groups = f", lr_groups: {[f'{v:.2e}' for v in group_lrs]}" if len(group_lrs) > 1 else ''
         LOGGER.logger.info(
             f'Epoch: {epoch + 1}, train_loss: {train_epoch_loss:.4f}, '
             f'lr: {current_lr:.2e}, grad_norm: {grad_norm:.4f}, '
-            f'ln_gain: {ln_gain:.4f}{teacher_state}'
+            f'ln_gain: {ln_gain:.4f}{teacher_state}{lr_groups}'
         )
         LOGGER.logger.info('elapsed_time: {:.2f} min'.format((time.time() - start)/60))
         if run:

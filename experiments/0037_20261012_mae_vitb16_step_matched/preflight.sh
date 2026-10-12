@@ -54,7 +54,7 @@ echo "ok : .venv はコンテナ python 土台 + system-site-packages + timm あ
 CODE="$(grep -v '^[[:space:]]*#' "${PROJECT_ROOT}/experiments/${EXP_NAME}/run_slurm.sh")"
 for fl in "--ssl_name mae" "--num_epoch 2568" "--warmup_t 64" "--optimizer adamw --beta2 0.95 --lr 2.4e-3 --weight_decay 0.05" \
           "--batch_size 512" "--color_plob 0.0 --blur_plob 0.0 --solar_plob 0.0" \
-          "--collapse_early_stop" "--collapse_ignore_uniformity"; do
+          "--collapse_early_stop" "--collapse_ignore_uniformity" "--step_log"; do
   grep -q -- "${fl}" <<<"${CODE}" || fail "${fl} が run_slurm.sh の実行部に無い"
 done
 grep -q -- "--ddp_linear_scale_lr" <<<"${CODE}" && fail "--ddp_linear_scale_lr が付いている(lr は最終値 2.4e-3 を直接渡す。二重スケールになる)"

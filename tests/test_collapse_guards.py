@@ -329,7 +329,7 @@ for flag in ("--bt_fp32_head", "--bt_step_log"):
 _check("model.py が fp32_head を BT の prepare_model へ渡している",
        'model_kwargs["fp32_head"] = True' in model_src)
 _check("model.py が collect_stats を criterion へ設定している",
-       "criterion.collect_stats = args.bt_step_log" in model_src)
+       "criterion.collect_stats = args.bt_step_log or args.step_log" in model_src)
 _check("sslutils が fp32_head を モデルと損失の両方へ渡している(片方だけでは桁落ちが残る)",
        "fp32_head=fp32_head)" in sslutils_src and "fp32=fp32_head)" in sslutils_src)
 # 旧 state.pt から復元した criterion は pickle 時点の属性しか持たない。再開時に CLI の値を
@@ -337,7 +337,7 @@ _check("sslutils が fp32_head を モデルと損失の両方へ渡している
 i_restore = entry_src.index("criterion = state['criterion']")
 i_reapply = entry_src.index("criterion.fp32 = args.bt_fp32_head")
 _check("resume 経路で復元後の criterion に fp32 / collect_stats を設定し直す", i_reapply > i_restore)
-_check("resume 経路で collect_stats も設定し直す", "criterion.collect_stats = args.bt_step_log" in entry_src)
+_check("resume 経路で collect_stats も設定し直す", "criterion.collect_stats = args.bt_step_log or args.step_log" in entry_src)
 bt_src = open(os.path.join(REPO_ROOT, "lib/sslmodel/models/barlowtwins.py"), encoding="utf-8").read()
 for attr in ("    fp32 = False", "    collect_stats = False", "    last_stats = None"):
     _check(f"旧 pickle 互換のクラス属性 `{attr.strip()}` がある", attr in bt_src)
@@ -367,7 +367,19 @@ _check("非有限の損失での打ち切りは loss_value の append 直後（�
 _check("打ち切りは --collapse_early_stop のときだけ（既存の実験の挙動は変えない）",
        "stop_on_nonfinite = getattr(ctx.args, 'collapse_early_stop', False)" in loop_src)
 _check("テレメトリは rank0 だけが貯める",
-       "getattr(criterion, 'collect_stats', False) and distributed.is_main_process()" in loop_src)
+       "bt_stats = [] if step_log and distributed.is_main_process() else None" in loop_src)
+# --step_log(2026-10-12): 全手法で step テレメトリ。BT / SimSiam は criterion の統計も
+_check("CLI --step_log が定義されている", "add_argument('--step_log'" in entry_src)
+_check("model.py は BT と SimSiam の criterion に collect_stats を設定する",
+       'if args.ssl_name in ("barlowtwins", "simsiam"):' in model_src
+       and "criterion.collect_stats = args.bt_step_log or args.step_log" in model_src)
+_check("resume 経路でも BT / SimSiam の collect_stats を設定し直す",
+       "if args.ssl_name in ('barlowtwins', 'simsiam'):" in entry_src
+       and "criterion.collect_stats = args.bt_step_log or args.step_log" in entry_src)
+_check("SimSiam 以外は bt_steps 接頭辞・BT 統計名を使わない",
+       "prefix='bt_steps' if is_bt else 'steps'" in loop_src and "BT_STAT_NAMES if is_bt else SIMSIAM_STAT_NAMES" in loop_src)
+_check("fix_pred_lr は最初の epoch から predictor を固定 lr にする",
+       loop_src.index("if args.fix_pred_lr:\n        # SimSiam fix-pred-lr: timm") < loop_src.index("for epoch in range(start_epoch, num_epoch):"))
 
 i_es = entry_src.index("early_stopping = state['early_stopping']")
 _check("resume 経路で復元した EarlyStopping の path を今回の DIR_NAME に合わせ直す(元のランの成果物を上書きしない)",

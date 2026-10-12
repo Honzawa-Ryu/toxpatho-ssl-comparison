@@ -53,7 +53,7 @@ echo "ok : .venv はコンテナ python 土台 + system-site-packages + timm あ
 # 7. 実験定義の整合(SimSiam: 論文 100 epoch × 2502 step ≒ 250k step / global batch 512)
 CODE="$(grep -v '^[[:space:]]*#' "${PROJECT_ROOT}/experiments/${EXP_NAME}/run_slurm.sh")"
 for fl in "--ssl_name simsiam" "--num_epoch 160" "--warmup_t 16" "--optimizer sgd --lr 0.1 --fix_pred_lr --weight_decay 1e-4" \
-          "--batch_size 256" "--collapse_early_stop" "--collapse_ignore_uniformity"; do
+          "--batch_size 256" "--collapse_early_stop" "--collapse_ignore_uniformity" "--step_log"; do
   grep -q -- "${fl}" <<<"${CODE}" || fail "${fl} が run_slurm.sh の実行部に無い"
 done
 grep -q -- "--wd_apply_to_bias_norm" <<<"${CODE}" && fail "--wd_apply_to_bias_norm が付いている(ViT では LN ゲインが削られて崩壊する経路)"

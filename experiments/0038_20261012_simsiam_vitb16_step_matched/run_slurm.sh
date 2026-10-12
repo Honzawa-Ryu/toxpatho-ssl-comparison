@@ -28,6 +28,12 @@
 #   6. 崩壊検知: NaN 即停止 + eff_rank<5(SimSiam の崩壊は表現が定数に潰れるので eff_rank で見える)。
 #      uniformity 判定は外す(健全な ViT 特徴でも 0 付近になりうる。DINO で実測)。損失の跳ね返り判定は
 #      使わない(SimSiam の損失は負なので定義できない。check_loss_rebound は min<=0 で無効)。
+#   7. augmentation に 0〜180 度の連続回転(毎回)が入る(全手法共通の ssl_transform)。
+#
+# ■ ログ(--step_log、学習には影響しない): steps_ep*.jsonl に step ごとの損失・grad_norm・グループ別 grad_norm・
+#   上位テンソルと、SimSiam の崩壊統計(z_erank / p_erank = 実効ランク、cos_zz = 2 ビューの z の一致度、
+#   z_nstd_sqrtd = 論文 Fig.2 の指標)。⚠️ 出力 BN が次元ごとの std を 1 に揃えるので、std 系の指標は
+#   ランク崩壊を見逃しうる。崩壊は z_erank の急落と cos_zz → 1 で見る。backbone の実効ランクは 5 epoch ごとの eff_rank。
 #
 # ■ コスト(BT 0033 の実測からの外挿): BT は 8 ノードで 2.27 分/epoch(2 ビュー × フル ViT-B、256/GPU)。
 #   SimSiam は 1 サンプルあたりほぼ同じ計算(投影ヘッドが小さい分わずかに軽い)で、GPU が 1/4 →
@@ -89,6 +95,7 @@ RUN_COMMAND="python ${PYTHON_PATH} \
     --batch_size 256 \
     --num_epoch 160 --warmup_t 16 --lr_min 0.0 \
     --collapse_early_stop --collapse_ignore_uniformity \
+    --step_log \
     --rank_monitor_interval 5 --save_interval 5 --resume"
 
 # =====================================================

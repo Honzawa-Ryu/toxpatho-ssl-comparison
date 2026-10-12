@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""bt_steps_ep*.jsonl（--bt_step_log が出す step テレメトリ）から、発散の起点を読み出す。
+"""*steps_ep*.jsonl（--step_log / --bt_step_log が出す step テレメトリ。全手法）から、発散の起点を読み出す。
 
 torch 不要・CPU のみ（ログインノードや andre01 で実行してよい）。
 
@@ -27,9 +27,10 @@ GROUP_COLS = ["gn_lars", "gn_raw", "gn_backbone", "gn_head"]
 
 
 def load(directory, epoch):
-    files = sorted(glob.glob(str(Path(directory) / f"bt_steps_ep{epoch:04d}_*.jsonl")))
+    # BT は bt_steps_ep*、他手法(--step_log)は steps_ep*
+    files = sorted(glob.glob(str(Path(directory) / f"*steps_ep{epoch:04d}_*.jsonl")))
     if not files:
-        raise SystemExit(f"bt_steps_ep{epoch:04d}_*.jsonl が {directory} に無い")
+        raise SystemExit(f"*steps_ep{epoch:04d}_*.jsonl が {directory} に無い")
     return [json.loads(line) for line in open(files[-1])]   # 再開した試行が複数あれば最新
 
 
@@ -57,6 +58,10 @@ def main():
 
     base_ep = a.baseline_epoch or a.epoch - 1
     base, rows = load(a.directory, base_ep), load(a.directory, a.epoch)
+    # 列は記録されているものだけ(BT: z/c 統計、SimSiam: z_nstd_sqrtd 等、MAE: 損失と勾配のみ)
+    skip = {"epoch", "step", "first_nonfinite", *GROUP_COLS} | {f"top{j}_{k}" for j in (1, 2, 3) for k in ("idx", "norm")}
+    global COLS
+    COLS = [k for k in rows[0] if k not in skip]
     print(f"基準 ep{base_ep}: {len(base)} step / 対象 ep{a.epoch}: {len(rows)} step\n")
     print(f"== 基準 ep{base_ep} の step 統計 ==")
     for k in COLS:

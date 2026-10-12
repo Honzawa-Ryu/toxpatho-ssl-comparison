@@ -23,6 +23,12 @@
 #   2. 精度: 公式は AMP(fp16 + GradScaler)、ここは bf16 autocast(他手法と同じ)。
 #   3. 崩壊検知を付ける: NaN 即停止 + eff_rank<5 + 損失の跳ね返り 2.0。uniformity 判定は外す
 #      (MAE の特徴は一様に散る目的で学習しないので、健全でも 0 付近になりうる。誤停止を避ける)。
+#   4. augmentation: 公式は RandomResizedCrop(0.2,1.0) + flip のみ。ここは全手法共通の ssl_transform を使うため、
+#      **0〜180 度の連続回転(毎回)と RandomGrayscale 0.05 が残る**(色・blur・solarize は 0)。回転は病理パッチの
+#      向きの不変性のために全手法で入れている(手法間で揃える)。非 90 度回転は四隅が黒になり、そのパッチの
+#      再構成は易しくなる(norm_pix_loss で分散 0 → 目標 0)。
+#   5. --step_log: step ごとの損失・grad_norm・エンコーダ/デコーダ別 grad_norm・上位テンソルを steps_ep*.jsonl に記録
+#      (学習には影響しない)。
 #
 # ■ コスト(**見積り。実測なし**): andre01 の旧 MAE ViT-B(bs 256, 3.1 it/s ≈ 800 枚/s/GPU)から GH200 で
 #   2〜3 倍と仮定 → 1600〜2400 枚/s/GPU × 8 = 1.3〜1.9 万枚/s → 1 epoch(800k)≈ 0.7〜1.0 分、2568 epoch ≈ 30〜45h
@@ -88,6 +94,7 @@ RUN_COMMAND="python ${PYTHON_PATH} \
     --color_plob 0.0 --blur_plob 0.0 --solar_plob 0.0 \
     --num_epoch 2568 --warmup_t 64 --lr_min 0.0 \
     --collapse_early_stop --collapse_ignore_uniformity --collapse_loss_rebound 2.0 \
+    --step_log \
     --rank_monitor_interval 5 --save_interval 5 --resume"
 
 # =====================================================

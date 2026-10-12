@@ -128,6 +128,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument('--proj_dim', type=int, default=0)             # Barlow Twins: projector width (paper: 8192); 0 = class default
     parser.add_argument('--bt_lambda', type=float, default=0.0)        # Barlow Twins: off-diagonal loss weight (paper: 5e-3); 0 = class default
     parser.add_argument('--bt_fp32_head', action='store_true')         # Barlow Twins: 投影ヘッドと損失だけ autocast を切って fp32 で計算(bf16 の標準化の桁落ち対策。exp 0029 の NaN の仮説)
+    # 全手法共通の step テレメトリ: 損失・grad_norm・グループ別 grad_norm・上位テンソル(+ BT / SimSiam は崩壊統計)を
+    # *steps_ep*.jsonl に記録する(学習には影響しない)。--bt_step_log は BT 用の旧名で、同じ効果。
+    parser.add_argument('--step_log', action='store_true')
     parser.add_argument('--bt_step_log', action='store_true')          # Barlow Twins: step 単位の z 統計・損失・grad_norm を bt_steps_ep*.jsonl に記録(学習には影響しない)
     parser.add_argument('--fix_pred_lr', action='store_true')          # SimSiam: keep predictor LR constant (not decayed)
     parser.add_argument('--diagnose_only', action='store_true')        # run the GPU-bound throughput probe and exit without training
@@ -218,12 +221,13 @@ def _run(ctx: RunContext):
             criterion = state['criterion']
             if hasattr(criterion, 'to'):
                 criterion.to(DEVICE)
+            if args.ssl_name in ('barlowtwins', 'simsiam'):
+                criterion.collect_stats = args.bt_step_log or args.step_log
             if args.ssl_name == 'barlowtwins':
                 # state.pt から復元した criterion は pickle 時点の属性を持つ(古い state.pt は
                 # fp32 / collect_stats を持たない)ので、今回の CLI の値で設定し直す。
                 # これを忘れると --bt_fp32_head を付けて再開しても損失が bf16 のまま走る。
                 criterion.fp32 = args.bt_fp32_head
-                criterion.collect_stats = args.bt_step_log
                 LOGGER.logger.info(f'BT criterion restored from state.pt: fp32={criterion.fp32}, '
                                    f'collect_stats={criterion.collect_stats}')
         if state.get('early_stopping') is not None:

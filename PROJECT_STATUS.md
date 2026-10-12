@@ -13,7 +13,7 @@
 > 実行は向こう。**コミットに「実装済み・未実行」が含まれるのは想定どおり。**
 > 詳細は [CLAUDE.md](CLAUDE.md)。
 
-最終更新: 2026-10-12（4 手法そろえ: **MAE 0037（論文 1600 ep の step 数 = 2568 epoch）/ SimSiam 0038 を定義**・preflight 通過。BT は 0035 の 1 本に絞る。いずれも qsub 未）
+最終更新: 2026-10-12（4 手法そろえ: MAE 0037（2568 epoch）/ SimSiam 0038 を定義。**実装を点検し、全手法共通の step テレメトリ `--step_log` を追加**、CPU スモーク通過。BT は 0035 の 1 本。いずれも qsub 未）
 
 ### 2026-09-30: Barlow Twins (ViT-B/16) の準備 — NaN 即停止を実装・学習は未投入
 
@@ -164,6 +164,28 @@ aug は他手法と共通の病理向け既定、projector 隠れ層幅は backb
 
 実験定義: `experiments/0037_20261012_mae_vitb16_step_matched/`、`experiments/0038_20261012_simsiam_vitb16_step_matched/`
 （どちらも run_slurm.sh / preflight.sh / resume.sh）。preflight 通過・**qsub 未**。
+
+### 🔍 投入前の点検とログの拡充（2026-10-12）
+
+**点検（実際の run_slurm.sh の引数で model / optimizer / scheduler を組み、コンテナ内 CPU で `train_epoch` を 3 step 回した）**:
+0035（BT）/ 0037（MAE）/ 0038（SimSiam）とも損失・勾配が有限、テレメトリが書かれることを確認。
+param group も意図どおり（MAE: wd 0.05 が 85 テンソル・除外 167、SimSiam: 4 グループ = 本体/本体の bias・LN/predictor/predictor の bias・BN、
+BT: 重み 54 / bias・LN 104）。見つけて直したもの:
+- **SimSiam の predictor が最初の 1 epoch だけ lr 1e-5 で走る**: timm の scheduler が構築時に全グループを warmup_lr_init にし、
+  `--fix_pred_lr` の掛け直しは epoch 末だけだった。`train()` の冒頭でも固定 lr にするよう修正。
+- MAE の augmentation に**全手法共通の 0〜180 度回転と grayscale 0.05 が残る**（公式は RRC + flip のみ）。手法間で揃えるため残し、逸脱として記録。
+
+**ログの拡充（`--step_log`、全手法。学習には影響しない）**: これまで BT 専用だった step テレメトリを一般化。
+`*steps_ep*.jsonl` に step ごとの損失・grad_norm・グループ別 grad_norm（ndim>1 / ndim<=1、backbone / head。MAE はエンコーダ / デコーダ）・
+上位 3 テンソルを記録。手法ごとの崩壊統計:
+- BT: 従来どおり z の std・c の対角など（`bt_steps_ep*`、ファイル名も従来どおり）
+- SimSiam: `z_erank` / `p_erank`（実効ランク）、`cos_zz`（2 ビューの z の一致度）、`cos_pz`（= -損失）、`z_nstd_sqrtd`（論文 Fig.2 の指標）。
+  ⚠️ 出力 BN が次元ごとの std を揃えるので std 系の指標はランク崩壊を見逃しうる（単体テストで確認）。崩壊は `z_erank` の急落と `cos_zz` → 1 で見る。
+- MAE: 損失と勾配のみ（criterion を持たない）
+epoch ログにはグループごとに lr が違うとき `lr_groups` を追記（BT の bias/LN、SimSiam の predictor が見える）。
+`scripts/analysis/bt_step_report.py` は全手法のファイルを読み、記録されている列だけ表示する。
+0035 は `--bt_step_log`（同じ効果）、0037 / 0038 は `--step_log` を付けた。preflight で点検。
+テスト: `tests/test_step_log.py`（コンテナ内 5 件）、既存のコンテナテスト 26 件、`tests/test_collapse_guards.py` 84 項目。
 
 ### 🔀 0036: 0035 と並列の対抗馬 — bias/LN にも LARS 適応を掛ける（2026-10-11 定義・未投入）
 

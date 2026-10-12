@@ -142,10 +142,10 @@ def prepare_model(
         model_kwargs["freeze_last_layer_epochs"] = args.dino_freeze_last_layer
         model_kwargs["fp32_head"] = args.dino_fp32_head
     model, criterion = ssl_class.prepare_model(backbone, head_size=size, **model_kwargs)
-    if args.ssl_name == "barlowtwins":
+    if args.ssl_name in ("barlowtwins", "simsiam"):
         # 学習には影響しない(no_grad の統計を記録するだけ)。再開時は entry.py が復元後の
         # criterion に同じ値を設定し直す。
-        criterion.collect_stats = args.bt_step_log
+        criterion.collect_stats = args.bt_step_log or args.step_log
     if args.model_path:
         # warm start: load weights only (student+teacher, via model.state_dict()) from a
         # finished run's model_ssl.pt. Unlike --resume, optimizer/scheduler/epoch counter
