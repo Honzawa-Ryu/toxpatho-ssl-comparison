@@ -27,25 +27,35 @@ class LARS(optim.Optimizer):
 
     @torch.no_grad()
     def step(self):
+        # グループ内のテンソルをまとめて計算する(torch._foreach_*)。旧実装はパラメータごとの Python ループで、
+        # BT の GPU 時間の約 9% を占めていた(exp 0041 の profiler)。計算は旧実装と同じ
+        # (tests/test_lars_foreach.py が旧実装との一致を固定している)。
         for g in self.param_groups:
-            for p in g['params']:
-                dp = p.grad
-                if dp is None:
-                    continue
-                if not g.get('weight_decay_filter', False):
-                    dp = dp.add(p, alpha=g['weight_decay'])
-                if not g.get('lars_adaptation_filter', False):
-                    pn = torch.norm(p)
-                    un = torch.norm(dp)
-                    one = torch.ones_like(pn)
-                    q = torch.where(pn > 0., torch.where(un > 0., g['eta'] * pn / un, one), one)
-                    dp = dp.mul(q)
+            params = [p for p in g['params'] if p.grad is not None]
+            if not params:
+                continue
+            grads = [p.grad for p in params]
+            if not g.get('weight_decay_filter', False):
+                dps = torch._foreach_add(grads, params, alpha=g['weight_decay'])
+            elif not g.get('lars_adaptation_filter', False):
+                dps = [d.clone() for d in grads]      # 下で in-place に q を掛けるので勾配そのものは書き換えない
+            else:
+                dps = grads                           # 読むだけ(bias/LN グループ: wd も LARS 適応も無し)
+            if not g.get('lars_adaptation_filter', False):
+                pn = torch.stack(torch._foreach_norm(params))
+                un = torch.stack(torch._foreach_norm(dps))
+                one = torch.ones_like(pn)
+                q = torch.where(pn > 0., torch.where(un > 0., g['eta'] * pn / un, one), one)
+                torch._foreach_mul_(dps, list(q.unbind(0)))
+            mus = []
+            for p in params:
                 state = self.state[p]
                 if 'mu' not in state:
                     state['mu'] = torch.zeros_like(p)
-                mu = state['mu']
-                mu.mul_(g['momentum']).add_(dp)
-                p.add_(mu, alpha=-g['lr'])
+                mus.append(state['mu'])
+            torch._foreach_mul_(mus, g['momentum'])
+            torch._foreach_add_(mus, dps)
+            torch._foreach_add_(params, mus, alpha=-g['lr'])
 
 
 def build_optimizer(ctx: RunContext, params, lr, weight_decay):

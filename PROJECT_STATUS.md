@@ -13,7 +13,7 @@
 > 実行は向こう。**コミットに「実装済み・未実行」が含まれるのは想定どおり。**
 > 詳細は [CLAUDE.md](CLAUDE.md)。
 
-最終更新: 2026-10-13（律速の切り分け用プロファイル **0041** を定義（1 ノード・1h、qsub 未）。**BT の勾配が world_size で割られ、bias/LN の実効 lr がノード数に依存する**ことを確認し `--bt_grad_ref_world` を追加。MAE 0040（lr 半減）定義済み）
+最終更新: 2026-10-13（高速化 1〜3 を実装: 評価 worker 2→8、LARS のまとめ計算、`--compile_blocks`。効果測定のプロファイル **0042** を定義（debug-g、qsub 未）。val は毎 epoch のまま（ユーザー決定）
 
 ### 2026-09-30: Barlow Twins (ViT-B/16) の準備 — NaN 即停止を実装・学習は未投入
 
@@ -212,6 +212,25 @@ global batch を固定してノード数で割り直す場合:
     ref を付け、lr_bias と clip の閾値を換算し直す。
 - 併せて見つけた配線漏れ: **`--bt_lambda` がどこにも使われていなかった**（常にクラス既定の 5e-3 = 論文値。全 BT 実験が 5e-3 を
   指定していたので結果は同じ）。`configure_bt_criterion` で構築時・resume 後とも反映するよう修正。
+
+### 🚀 高速化 1〜3 を実装（2026-10-13、ユーザー決定: ノード半減と val の間引きはしない）
+
+**val_loss は毎 epoch のまま**（「密に追いたい」）。ノード半減は効果（通信分の −13〜20%）に対して壁時計が 1.6〜1.75 倍・RAM がぎりぎりなので見送り。
+
+1. **評価用 DataLoader の worker 2 → 8**（`--eval_workers`、既定 8）。val と崩壊監視の頻度・中身は変えず、拡張の並列度だけ上げる。
+   persistent にはしない（val は途中の batch で打ち切るので、persistent だと次の iter() が reset 待ちで止まりうる）。
+2. **LARS をまとめて計算**（`torch._foreach_*`）。計算は旧実装と同じで、`tests/test_lars_foreach.py` が旧実装（パラメータごとのループ）
+   との一致を 6 step・勾配なし・重み 0 の枝まで含めて固定している。state_dict も互換。
+3. **`--compile_blocks`**（既定 off）: backbone の各 Transformer block の forward だけを torch.compile。モジュール全体を
+   コンパイルしないのは、state_dict のキーが変わらない（チェックポイント互換）・step テレメトリの block 出力のフックが
+   コンパイル領域の外で動き epoch ごとの付け外しで再コンパイルされない・DDP と干渉しない、ため。
+   `tests/test_compile_blocks.py`（CPU の inductor）で出力・勾配の一致、キー不変、フックの動作を確認。
+   ⚠️ ログインノードの module 環境の CC/CXX（NVIDIA HPC SDK の nvc/nvc++）がコンテナに持ち込まれて inductor が落ちたので、
+   コンパイル時はコンテナの gcc/g++ を使うよう強制している。GPU（triton）での動作と効果は未確認 → 0042。
+
+**プロファイル 0042**（`experiments/0042_20261013_profile_compile/`、debug-g・30 分 × 3 本、qsub 未）: 本番のバッチで
+compile なし（1・2 を含む現行コード）と `--compile` を続けて測り、0041 と比べる。compile の効果が出れば本番の run_slurm.sh に
+`--compile_blocks` を足す。
 
 ### ⏱️ プロファイル 0041 のやり直し（2026-10-13, job 3543303〜5）— バッチを上げても GPU の速度はほぼ伸びない
 

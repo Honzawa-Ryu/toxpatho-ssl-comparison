@@ -387,6 +387,10 @@ _check("scheduler の cosine 長は num_epoch - warmup_t", "t_initial=max(1, num
 _check("最終書き出しは criterion が None(MAE)でも落ちない", "if criterion is not None:   # MAE は損失をモデル内で計算" in entry_src)
 _check("BT: --bt_grad_ref_world / --bt_lambda を構築時と resume 後の両方で criterion に入れる",
        "configure_bt_criterion(criterion, args)" in model_src and "configure_bt_criterion(criterion, args)" in entry_src)
+data_src = open(os.path.join(REPO_ROOT, "lib/trainer/data.py"), encoding="utf-8").read()
+_check("評価用 DataLoader の worker は --eval_workers(既定 8)", "num_workers=getattr(args, 'eval_workers', 8)" in data_src
+       and "add_argument('--eval_workers', type=int, default=8)" in entry_src)
+_check("--compile_blocks は prepare_model で適用される", "compile_blocks(model)" in model_src)
 # --step_log(2026-10-12): 全手法で step テレメトリ。BT / SimSiam は criterion の統計も
 _check("CLI --step_log が定義されている", "add_argument('--step_log'" in entry_src)
 _check("model.py は BT と SimSiam の criterion に collect_stats を設定する",

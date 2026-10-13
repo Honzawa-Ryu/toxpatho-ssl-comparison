@@ -42,6 +42,9 @@ from lib.trainer.loop import train_epoch                      # noqa: E402
 N_SYNTH, N_SUB, N_LOAD = 15, 10, 20
 
 
+EXTRA_ARGS = []   # --compile 指定時に全構成へ足す引数
+
+
 def exp_args(exp, batch, out_dir, base_batch=None):
     src = open(f'experiments/{exp}/run_slurm.sh').read()
     cmd = re.search(r'RUN_COMMAND="python \$\{PYTHON_PATH\} (.*?)"', src, re.S).group(1).replace('\\\n', ' ')
@@ -54,7 +57,7 @@ def exp_args(exp, batch, out_dir, base_batch=None):
         # ホスト RAM の先読み量を本番のバッチと同じに保つ(4 × 本番バッチ / このバッチ)。
         # 0041 の初回は prefetch 4 のまま batch 512 にしてノードの RAM 上限(cgroup)で落ちた。
         argv += ['--loader_prefetch', str(max(1, round(4 * base_batch / batch)))]
-    return build_parser().parse_args(argv)
+    return build_parser().parse_args(argv + EXTRA_ARGS)
 
 
 def synthetic_batch(args, ssl_class, b, device):
@@ -110,6 +113,7 @@ def measure(exp, b, out_root, steps, profile, base_batch):
     out_dir = tempfile.mkdtemp(dir=out_root, prefix=f'{exp[:4]}_b{b}_')
     args = exp_args(exp, b, out_dir, base_batch)
     rec['loader_prefetch'] = args.loader_prefetch
+    rec['compile_blocks'] = bool(getattr(args, 'compile_blocks', False))
     rec['host_mem_start_gb'] = host_mem()
     ctx = build_context(args)
     dev = ctx.device
@@ -135,7 +139,12 @@ def measure(exp, b, out_root, steps, profile, base_batch):
         optimizer.step()
 
     try:
-        rec['synth_s'] = timed(full, N_SYNTH, 5 if cuda else 1)
+        warm = (10 if rec['compile_blocks'] else 5) if cuda else 1     # 初回のコンパイルを計測から外す
+        t_c = time.perf_counter()
+        full()
+        _sync()
+        rec['first_step_s'] = time.perf_counter() - t_c               # コンパイル込みの最初の 1 step
+        rec['synth_s'] = timed(full, N_SYNTH, warm)
         rec['fwdbwd_s'] = timed(fwdbwd, N_SUB, 2 if cuda else 0)
         rec['opt_s'] = timed(optimizer.step, N_SUB, 2 if cuda else 0)
         rec['peak_mem_gb'] = torch.cuda.max_memory_allocated() / 2**30 if cuda else float('nan')
@@ -192,12 +201,13 @@ def measure(exp, b, out_root, steps, profile, base_batch):
         with tprof(activities=acts) as prof:
             train_epoch(ctx, model, tr, criterion, optimizer, 0, num_epoch=args.num_epoch)
         close(loader)
-        with open(os.path.join(out_root, f'profile_{exp[:4]}_b{b}.txt'), 'w') as f:
+        pname = f"profile_{exp[:4]}_b{b}{'_compile' if rec['compile_blocks'] else ''}.txt"
+        with open(os.path.join(out_root, pname), 'w') as f:
             ka = prof.key_averages()
             if cuda:
                 f.write('### sort by self CUDA time\n' + ka.table(sort_by='self_cuda_time_total', row_limit=30) + '\n')
             f.write('### sort by self CPU time\n' + ka.table(sort_by='self_cpu_time_total', row_limit=30) + '\n')
-        rec['profile'] = f'profile_{exp[:4]}_b{b}.txt'
+        rec['profile'] = pname
 
     print(json.dumps(rec), flush=True)
     del model, optimizer, criterion
@@ -212,7 +222,10 @@ def main():
     ap.add_argument('--exp', action='append', required=True, help='<experiment dir>:<batch,batch,...> 先頭が本番のバッチ')
     ap.add_argument('--steps', type=int, default=30)
     ap.add_argument('--smoke', action='store_true', help='CPU で配線だけ確かめる(回数を最小に)')
+    ap.add_argument('--compile', action='store_true', help='全構成に --compile_blocks を付ける(初回のコンパイルは warmup に含まれる)')
     a = ap.parse_args()
+    if a.compile:
+        EXTRA_ARGS.append('--compile_blocks')
     if a.smoke:
         global N_SYNTH, N_SUB, N_LOAD
         N_SYNTH, N_SUB, N_LOAD = 1, 1, 2

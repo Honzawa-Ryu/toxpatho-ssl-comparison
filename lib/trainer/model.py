@@ -80,6 +80,37 @@ def configure_bt_criterion(criterion, args):
           f"(world_size={distributed.world_size()}, bt_grad_ref_world={ref or 'off'})")
 
 
+def compile_blocks(model):
+    """backbone の各 Transformer block(`blocks.N`、BT/SimSiam は `backbone.blocks.N`、DINO は `student_backbone.blocks.N`)の
+    forward を torch.compile に置き換える。戻り値は置き換えた block 数。
+
+    モジュール全体ではなく「block の forward だけ」をコンパイルする理由:
+    - state_dict のキーが変わらない(torch.compile(model) は `_orig_mod.` を挟み、既存のチェックポイントと互換が無くなる)。
+    - モジュールの forward フック(step テレメトリの block 出力の測定、bt_telemetry.StepProbe)はコンパイル領域の外で
+      eager に動くので、epoch ごとにフックを付け外ししても再コンパイルされない。
+    - DDP はモジュールの外側で勾配を集約するので、内側の forward をコンパイルしても干渉しない。
+    dynamic=False: 形状(MAE のエンコーダは 50 トークン、評価時は 197 トークン等)ごとに別のグラフを作る(数種類)。
+    """
+    import os
+    import re
+    import shutil
+    # ログインノードの module 環境から CC/CXX(NVIDIA HPC SDK の nvc / nvc++)が入ってくる。/work が bind されているので
+    # コンテナ内からもパスは見えるが動かず、inductor が「C++ コンパイラが無い」で落ちる(2026-10-13 に実際に踏んだ)。
+    # コンパイルにはコンテナの gcc / g++ を使う(triton の launcher も CC を見る)。inductor の設定は import 時に
+    # CXX を読み込み済みなので、設定値も直接書き換える。
+    os.environ['CC'], os.environ['CXX'] = shutil.which('gcc') or 'gcc', shutil.which('g++') or 'g++'
+    import torch._inductor.config as inductor_config
+    inductor_config.cpp.cxx = (None, os.environ['CXX'])
+    pat = re.compile(r"^(module\.)?(backbone\.|student_backbone\.)?blocks\.\d+$")
+    n = 0
+    for name, m in model.named_modules():
+        if pat.match(name):
+            m.forward = torch.compile(m.forward, dynamic=False)
+            n += 1
+    print(f"compile_blocks: torch.compile applied to {n} transformer blocks")
+    return n
+
+
 # prepare model
 def prepare_model(
         ctx: RunContext,
@@ -171,6 +202,8 @@ def prepare_model(
         criterion.collect_stats = args.bt_step_log or args.step_log
     if args.ssl_name == "barlowtwins":
         configure_bt_criterion(criterion, args)
+    if getattr(args, 'compile_blocks', False):
+        compile_blocks(model)
     if args.model_path:
         # warm start: load weights only (student+teacher, via model.state_dict()) from a
         # finished run's model_ssl.pt. Unlike --resume, optimizer/scheduler/epoch counter

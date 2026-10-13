@@ -174,11 +174,15 @@ def prepare_data(
         prefetch_factor=getattr(args, 'loader_prefetch', 4),   # 既定 4。ホスト RAM の先読み量(entry.py --loader_prefetch)
     )
 
+    # 評価用(毎 epoch の val_loss と 5 epoch ごとの崩壊監視)。旧既定の 2 worker では拡張が律速で、epoch の
+    # BT で約 17%・MAE で約 28% を占めていた(exp 0041)。頻度は下げずに worker を増やす(--eval_workers、既定 8)。
+    # 毎 epoch 作り直す(persistent にしない): val は途中の batch で打ち切るので、persistent だと次の iter() が
+    # 前の iterator の reset 待ちで止まることがある(0041 のプロファイルで実際に止まった)。
     eval_loader = DataLoader(
         eval_dataset,
         batch_size=batch_size,
         shuffle=False,
-        num_workers=2,
+        num_workers=getattr(args, 'eval_workers', 8),
         pin_memory=True,
         drop_last=True,
     )
