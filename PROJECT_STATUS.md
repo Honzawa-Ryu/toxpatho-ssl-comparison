@@ -13,7 +13,7 @@
 > 実行は向こう。**コミットに「実装済み・未実行」が含まれるのは想定どおり。**
 > 詳細は [CLAUDE.md](CLAUDE.md)。
 
-最終更新: 2026-10-13（高速化 1〜3 を実装: 評価 worker 2→8、LARS のまとめ計算、`--compile_blocks`。効果測定のプロファイル **0042** を定義（debug-g、qsub 未）。val は毎 epoch のまま（ユーザー決定）
+最終更新: 2026-10-13（**0042 で torch.compile の効果を確認: 1 GPU の学習ループで BT +20%・MAE +8%・SimSiam +6%**。BT 0035 と MAE 0040 に `--compile_blocks` を付けた（qsub 未）。SimSiam 0038 は ep144/160）
 
 ### 2026-09-30: Barlow Twins (ViT-B/16) の準備 — NaN 即停止を実装・学習は未投入
 
@@ -234,6 +234,20 @@ global batch を固定してノード数で割り直す場合:
 実体の無い /usr/local/cuda/compat/lib/libcuda.so.1 を見て止まる（apptainer --nv が bind するホストのドライバは /.singularity.d/libs にある）。
 → `compile_blocks` で実体のある libcuda.so.1 を探し、symlink を置いたディレクトリを `TRITON_LIBCUDA_PATH` に設定するよう修正（ログに場所を出す）。
 GPU の無いログインノードでは確認できないので、0042 を再投入して確かめる。
+
+**0042 の 2 回目（job 3543692〜4）: compile が動き、効果を確認。** triton は `/usr/local/cuda/compat/lib.real/libcuda.so.1` を使った。
+
+| | eager の学習ループ | **compile の学習ループ** | eager の GPU 上限 | compile の GPU 上限 | 初回 1 step（コンパイル込み） | GPU メモリ |
+|---|---|---|---|---|---|---|
+| BT 0035（256） | 1,159 画像/s | **1,395（+20%）** | 1,269 | 1,557（+23%） | 6.9 s | 35 → 34 GB |
+| SimSiam 0038（256） | 994 | **1,057（+6%）** | 1,096 | 1,303（+19%） | 6.4 s | 33 → 32 GB |
+| MAE 0040（512） | 3,391 | **3,668（+8%）** | 3,741 | 4,067（+9%） | 6.2 s | 27 → 26 GB |
+
+- コンパイルは 1 回 6 秒程度で、学習全体から見れば無視できる。メモリはむしろ少し減る。
+- SimSiam は GPU 上限が +19% なのに学習ループは +6%: step ごとの崩壊統計（z / p の実効ランクの SVD を毎 step 2 回）など、
+  コンパイル対象外の固定コストの比率が上がったため。必要なら統計を数 step おきにする余地がある（今は毎 step のまま）。
+- → **BT 0035 と MAE 0040 に `--compile_blocks` を付けた**（preflight で点検）。学習の計算は同じで、数値の丸めが少し変わる程度。
+  SimSiam 0038 は走行中（ep144/160）なので変えない。
 
 **プロファイル 0042**（`experiments/0042_20261013_profile_compile/`、debug-g・30 分 × 3 本）: 本番のバッチで
 compile なし（1・2 を含む現行コード）と `--compile` を続けて測り、0041 と比べる。compile の効果が出れば本番の run_slurm.sh に

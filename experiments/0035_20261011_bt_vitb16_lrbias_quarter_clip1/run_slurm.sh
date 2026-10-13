@@ -96,6 +96,10 @@
 # 投入前提:
 #   bash experiments/0035_20261011_bt_vitb16_lrbias_quarter_clip1/preflight.sh   # 点検のみ(.venv 等)
 #   qsub experiments/0035_20261011_bt_vitb16_lrbias_quarter_clip1/run_slurm.sh   # ⚠️ ユーザー承認後
+#
+# ■ 高速化(2026-10-13, exp 0041/0042): --compile_blocks(backbone の各 block の forward だけ torch.compile。
+#   学習の計算は同じで、丸めが少し変わる程度)。1 GPU の学習ループで BT +20%・MAE +8%。評価用 DataLoader の worker 8・
+#   LARS のまとめ計算は既定で入る(コード側)。
 # =====================================================
 #PBS -N 0035_bt_vitb16
 #PBS -q regular-g
@@ -161,7 +165,7 @@ RUN_COMMAND="python ${PYTHON_PATH} \
     --proj_dim 8192 --bt_lambda 5e-3 \
     --num_epoch 1600 --warmup_t 16 --lr_min 0.0 \
     --collapse_early_stop --collapse_ignore_uniformity --collapse_loss_rebound 2.0 \
-    --bt_step_log --clip_grad 1.0 \
+    --bt_step_log --clip_grad 1.0 --compile_blocks \
     --rank_monitor_interval 5 --save_interval 5 --resume"
 
 # =====================================================

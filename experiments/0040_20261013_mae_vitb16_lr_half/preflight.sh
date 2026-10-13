@@ -60,6 +60,8 @@ done
 grep -q -- "--ddp_linear_scale_lr" <<<"${CODE}" && fail "--ddp_linear_scale_lr が付いている(lr は最終値 1.2e-3 を直接渡す。二重スケールになる)"
 grep -q "^#PBS -l select=8" "${PROJECT_ROOT}/experiments/${EXP_NAME}/run_slurm.sh" || fail "select=8 でない(batch 4096 にならない)"
 grep -q "restore_healthy_weights" "${PROJECT_ROOT}/lib/trainer/loop.py" || fail "loop.py が P2 修正前"
+grep -q -- "--compile_blocks" <<<"$(grep -v '^[[:space:]]*#' "${PROJECT_ROOT}/experiments/${EXP_NAME}/run_slurm.sh")" || fail "--compile_blocks が無い"
+grep -q "TRITON_LIBCUDA_PATH" "${PROJECT_ROOT}/lib/trainer/model.py" || fail "compile の libcuda 対策(2026-10-13)より前のコード"
 grep -q "if criterion is not None:   # MAE" "${PROJECT_ROOT}/lib/trainer/entry.py" || fail "entry.py が MAE の終了処理の修正前(0037 は最後に TypeError で落ちた)"
 echo "ok : MAE / 2568 epoch(≒論文 1600 epoch の step 数) / warmup 64 / AdamW 1.2e-3(0037 の半分) β2 0.95 wd 0.05 / bs 4096 / 色aug なし"
 
