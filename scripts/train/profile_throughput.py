@@ -20,6 +20,7 @@ CPU 側オーバーヘッド(同期・テレメトリ・optimizer)。1 GPU な�
 """
 import argparse
 import contextlib
+import gc
 import json
 import os
 import re
@@ -41,7 +42,7 @@ from lib.trainer.loop import train_epoch                      # noqa: E402
 N_SYNTH, N_SUB, N_LOAD = 15, 10, 20
 
 
-def exp_args(exp, batch, out_dir):
+def exp_args(exp, batch, out_dir, base_batch=None):
     src = open(f'experiments/{exp}/run_slurm.sh').read()
     cmd = re.search(r'RUN_COMMAND="python \$\{PYTHON_PATH\} (.*?)"', src, re.S).group(1).replace('\\\n', ' ')
     argv = [a.replace('${PROJECT_ROOT}', os.getcwd()).replace('${EXP_NAME}', exp) for a in shlex.split(cmd)]
@@ -49,6 +50,10 @@ def exp_args(exp, batch, out_dir):
     argv[argv.index('--batch_size') + 1] = str(batch)
     if '--resume' in argv:
         argv.remove('--resume')
+    if base_batch:
+        # ホスト RAM の先読み量を本番のバッチと同じに保つ(4 × 本番バッチ / このバッチ)。
+        # 0041 の初回は prefetch 4 のまま batch 512 にしてノードの RAM 上限(cgroup)で落ちた。
+        argv += ['--loader_prefetch', str(max(1, round(4 * base_batch / batch)))]
     return build_parser().parse_args(argv)
 
 
@@ -94,10 +99,18 @@ class Truncated:
         self.t.append(time.perf_counter())
 
 
-def measure(exp, b, out_root, steps, profile):
+def host_mem():
+    """ノードのホスト RAM(GB): 使用中・ページキャッシュ込みの合計(/proc/meminfo)。"""
+    m = {l.split(':')[0]: int(l.split()[1]) for l in open('/proc/meminfo')}
+    return round((m['MemTotal'] - m['MemAvailable']) / 2**20, 1)
+
+
+def measure(exp, b, out_root, steps, profile, base_batch):
     rec = dict(exp=exp, batch_per_gpu=b)
     out_dir = tempfile.mkdtemp(dir=out_root, prefix=f'{exp[:4]}_b{b}_')
-    args = exp_args(exp, b, out_dir)
+    args = exp_args(exp, b, out_dir, base_batch)
+    rec['loader_prefetch'] = args.loader_prefetch
+    rec['host_mem_start_gb'] = host_mem()
     ctx = build_context(args)
     dev = ctx.device
     cuda = torch.cuda.is_available()      # CPU でも動く(ログインノードでのスモーク用。数値は意味を持たない)
@@ -154,12 +167,18 @@ def measure(exp, b, out_root, steps, profile):
     for _ in range(N_LOAD):
         next(it)
     rec['loader_img_s'] = N_LOAD * b / (time.perf_counter() - t0)
+    rec['host_mem_loader_gb'] = host_mem()
     close(loader)
+    del loader, it
+    gc.collect()
 
     loader = fresh_loader()
     tr = Truncated(loader, steps)
     train_epoch(ctx, model, tr, criterion, optimizer, 0, num_epoch=args.num_epoch)
+    rec['host_mem_real_gb'] = host_mem()
     close(loader)
+    del loader
+    gc.collect()
     skip = min(5, max(0, steps - 2))
     dts = [b2 - a for a, b2 in zip(tr.t[skip:-1], tr.t[skip + 1:])]   # 先頭 skip step を除く
     rec['real_s'] = sum(dts) / len(dts)
@@ -182,6 +201,7 @@ def measure(exp, b, out_root, steps, profile):
 
     print(json.dumps(rec), flush=True)
     del model, optimizer, criterion
+    gc.collect()
     torch.cuda.empty_cache()
     return rec
 
@@ -204,9 +224,10 @@ def main():
     results = []
     for spec in a.exp:
         exp, batches = spec.split(':')
-        for k, b in enumerate(int(x) for x in batches.split(',')):
+        bs = [int(x) for x in batches.split(',')]
+        for k, b in enumerate(bs):
             try:
-                r = measure(exp, b, a.out, a.steps, profile=(k == 0))
+                r = measure(exp, b, a.out, a.steps, profile=(k == 0), base_batch=bs[0])
             except Exception as e:      # 1 構成の失敗で全体を止めない
                 r = dict(exp=exp, batch_per_gpu=b, error=f'{type(e).__name__}: {e}')
                 print(json.dumps(r), flush=True)

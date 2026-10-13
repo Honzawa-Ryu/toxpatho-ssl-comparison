@@ -171,7 +171,7 @@ def prepare_data(
         pin_memory=True,
         drop_last=True,
         persistent_workers=True,
-        prefetch_factor=4,
+        prefetch_factor=getattr(args, 'loader_prefetch', 4),   # 既定 4。ホスト RAM の先読み量(entry.py --loader_prefetch)
     )
 
     eval_loader = DataLoader(

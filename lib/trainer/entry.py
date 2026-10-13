@@ -134,6 +134,10 @@ def build_parser() -> argparse.ArgumentParser:
     # 全手法共通の step テレメトリ: 損失・grad_norm・グループ別 grad_norm・上位テンソル(+ BT / SimSiam は崩壊統計)を
     # *steps_ep*.jsonl に記録する(学習には影響しない)。--bt_step_log は BT 用の旧名で、同じ効果。
     parser.add_argument('--step_log', action='store_true')
+    # 学習用 DataLoader の prefetch_factor(worker 1 つあたり先読みするバッチ数)。ホスト RAM の先読み量は
+    # 16 worker × prefetch × 1 バッチ(BT 256/GPU・2 ビューで約 300MB)。1 GPU あたりのバッチを上げるときは下げる
+    # (exp 0041 で batch 512 のとき 16×4×600MB ≒ 40GB の先読みとローカル SSD へのコピーでノードの RAM 上限を超えた)。
+    parser.add_argument('--loader_prefetch', type=int, default=4)
     parser.add_argument('--bt_step_log', action='store_true')          # Barlow Twins: step 単位の z 統計・損失・grad_norm を bt_steps_ep*.jsonl に記録(学習には影響しない)
     parser.add_argument('--fix_pred_lr', action='store_true')          # SimSiam: keep predictor LR constant (not decayed)
     parser.add_argument('--diagnose_only', action='store_true')        # run the GPU-bound throughput probe and exit without training
