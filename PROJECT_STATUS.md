@@ -228,7 +228,14 @@ global batch を固定してノード数で割り直す場合:
    ⚠️ ログインノードの module 環境の CC/CXX（NVIDIA HPC SDK の nvc/nvc++）がコンテナに持ち込まれて inductor が落ちたので、
    コンパイル時はコンテナの gcc/g++ を使うよう強制している。GPU（triton）での動作と効果は未確認 → 0042。
 
-**プロファイル 0042**（`experiments/0042_20261013_profile_compile/`、debug-g・30 分 × 3 本、qsub 未）: 本番のバッチで
+**0042 の 1 回目（job 3543566〜8）**: compile なしの計測は取れた（LARS のまとめ計算で BT の optimizer.step が 6.4 → 4.4 ms、
+本番の学習ループ 1,142 → 1,159 画像/s で +1.5%。SimSiam 975 → 997、MAE 3,305 → 3,417 は同じコードなので計測のばらつき程度）。
+**compile ありは 3 本とも triton が `libcuda.so cannot found` で落ちた**: triton は `ldconfig -p` を優先し、コンテナの ld キャッシュにある
+実体の無い /usr/local/cuda/compat/lib/libcuda.so.1 を見て止まる（apptainer --nv が bind するホストのドライバは /.singularity.d/libs にある）。
+→ `compile_blocks` で実体のある libcuda.so.1 を探し、symlink を置いたディレクトリを `TRITON_LIBCUDA_PATH` に設定するよう修正（ログに場所を出す）。
+GPU の無いログインノードでは確認できないので、0042 を再投入して確かめる。
+
+**プロファイル 0042**（`experiments/0042_20261013_profile_compile/`、debug-g・30 分 × 3 本）: 本番のバッチで
 compile なし（1・2 を含む現行コード）と `--compile` を続けて測り、0041 と比べる。compile の効果が出れば本番の run_slurm.sh に
 `--compile_blocks` を足す。
 

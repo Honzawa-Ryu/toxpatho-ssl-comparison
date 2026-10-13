@@ -80,6 +80,40 @@ def configure_bt_criterion(criterion, args):
           f"(world_size={distributed.world_size()}, bt_grad_ref_world={ref or 'off'})")
 
 
+def _point_triton_to_libcuda():
+    """triton に GPU ドライバの libcuda.so の場所を教える(コンパイル時のみ)。
+
+    apptainer --nv はホストのドライバを /.singularity.d/libs に bind して LD_LIBRARY_PATH に載せるが、triton は
+    `ldconfig -p` の結果を優先し、コンテナの ld キャッシュにある /usr/local/cuda/compat/lib/libcuda.so.1(実体が無い)
+    を見て「libcuda.so cannot found」で落ちた(exp 0042、2026-10-13)。実体のある libcuda.so.1 を探し、リンク用の
+    libcuda.so の symlink を置いたディレクトリを TRITON_LIBCUDA_PATH に設定する。
+    """
+    import os
+    import tempfile
+    if os.environ.get('TRITON_LIBCUDA_PATH'):
+        return
+    cands = [d for d in os.environ.get('LD_LIBRARY_PATH', '').split(':') if d]
+    cands += ['/.singularity.d/libs', '/usr/lib64', '/usr/lib/aarch64-linux-gnu', '/usr/lib/x86_64-linux-gnu',
+              '/usr/local/cuda/compat/lib']
+    real = next((os.path.join(d, 'libcuda.so.1') for d in cands if os.path.isfile(os.path.join(d, 'libcuda.so.1'))), None)
+    if real is None:
+        print('compile_blocks: libcuda.so.1 が見つからない(GPU の無い環境)。triton の既定の探索に任せる')
+        return
+    link_dir = os.path.join(tempfile.gettempdir(), f'triton_libcuda_{os.getuid()}')
+    os.makedirs(link_dir, exist_ok=True)
+    for name in ('libcuda.so', 'libcuda.so.1'):
+        dst = os.path.join(link_dir, name)
+        if os.path.islink(dst) and os.readlink(dst) != real:
+            os.remove(dst)
+        if not os.path.lexists(dst):
+            try:
+                os.symlink(real, dst)
+            except FileExistsError:     # 同じノードの別プロセスが同時に作った
+                pass
+    os.environ['TRITON_LIBCUDA_PATH'] = link_dir
+    print(f'compile_blocks: TRITON_LIBCUDA_PATH={link_dir} -> {real}')
+
+
 def compile_blocks(model):
     """backbone の各 Transformer block(`blocks.N`、BT/SimSiam は `backbone.blocks.N`、DINO は `student_backbone.blocks.N`)の
     forward を torch.compile に置き換える。戻り値は置き換えた block 数。
@@ -101,6 +135,7 @@ def compile_blocks(model):
     os.environ['CC'], os.environ['CXX'] = shutil.which('gcc') or 'gcc', shutil.which('g++') or 'g++'
     import torch._inductor.config as inductor_config
     inductor_config.cpp.cxx = (None, os.environ['CXX'])
+    _point_triton_to_libcuda()
     pat = re.compile(r"^(module\.)?(backbone\.|student_backbone\.)?blocks\.\d+$")
     n = 0
     for name, m in model.named_modules():
