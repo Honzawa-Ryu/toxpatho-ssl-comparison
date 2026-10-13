@@ -53,6 +53,9 @@ def exp_args(exp, batch, out_dir, base_batch=None):
     argv[argv.index('--batch_size') + 1] = str(batch)
     if '--resume' in argv:
         argv.remove('--resume')
+    # compile の有無はプロファイル側(--compile → EXTRA_ARGS)だけで決める。本番の run_slurm.sh に --compile_blocks が
+    # 入っていても読み込み時に外す(外さないと「compile なし」の測定にも compile が入り比較が成立しない。レビュー指摘)。
+    argv = [x for x in argv if x != '--compile_blocks']
     if base_batch:
         # ホスト RAM の先読み量を本番のバッチと同じに保つ(4 × 本番バッチ / このバッチ)。
         # 0041 の初回は prefetch 4 のまま batch 512 にしてノードの RAM 上限(cgroup)で落ちた。
