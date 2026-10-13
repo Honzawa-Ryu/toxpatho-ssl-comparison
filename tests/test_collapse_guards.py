@@ -384,6 +384,7 @@ _check("state.json は state.pt の後に書く",
        loop_src.index("atomic_torch_save(state, f'{DIR_NAME}/state.pt')") < loop_src.index("write_state_meta(DIR_NAME"))
 _check("scheduler は epoch 末に step(epoch + 1)", "scheduler.step(epoch + 1)" in loop_src and "scheduler.step(epoch)\n" not in loop_src)
 _check("scheduler の cosine 長は num_epoch - warmup_t", "t_initial=max(1, num_epoch - warmup_t)" in model_src)
+_check("最終書き出しは criterion が None(MAE)でも落ちない", "if criterion is not None:   # MAE は損失をモデル内で計算" in entry_src)
 # --step_log(2026-10-12): 全手法で step テレメトリ。BT / SimSiam は criterion の統計も
 _check("CLI --step_log が定義されている", "add_argument('--step_log'" in entry_src)
 _check("model.py は BT と SimSiam の criterion に collect_stats を設定する",

@@ -263,7 +263,8 @@ def _run(ctx: RunContext):
             )
             # 2. save results & config
             LOGGER.to_logger(name='argument', obj=args)
-            LOGGER.to_logger(name='loss', obj=criterion)
+            if criterion is not None:   # MAE は損失をモデル内で計算するので criterion が None(0037 がここで落ちた)
+                LOGGER.to_logger(name='loss', obj=criterion)
             LOGGER.to_logger(
                 name='optimizer', obj=optimizer, skip_keys={'state', 'param_groups'}
             )

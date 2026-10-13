@@ -13,7 +13,7 @@
 > 実行は向こう。**コミットに「実装済み・未実行」が含まれるのは想定どおり。**
 > 詳細は [CLAUDE.md](CLAUDE.md)。
 
-最終更新: 2026-10-12（**BT 0039 / MAE 0037 / SimSiam 0038 を投入**（job 3534535 / 3534536 / 3534537、キュー待ち））
+最終更新: 2026-10-13（3 本の初回結果: **BT 0039 は ep67 で NaN**（損失修正では止まらず）、**MAE 0037 は ep251 から不安定化し ep319 に eff_rank<5 で停止**、**SimSiam 0038 は ep128/160 で走行中**。どちらの発散も起点は初期 block の LayerNorm の勾配スパイクで、backbone 内部の活性の単調増大を伴う）
 
 ### 2026-09-30: Barlow Twins (ViT-B/16) の準備 — NaN 即停止を実装・学習は未投入
 
@@ -164,6 +164,40 @@ aug は他手法と共通の病理向け既定、projector 隠れ層幅は backb
 
 実験定義: `experiments/0037_20261012_mae_vitb16_step_matched/`、`experiments/0038_20261012_simsiam_vitb16_step_matched/`
 （どちらも run_slurm.sh / preflight.sh / resume.sh）。preflight 通過・**qsub 未**。
+
+### 💥 3 本の初回結果（2026-10-13 判読）
+
+3 本とも 10/12 21:16 前後に開始（予定より早かった）。
+
+**BT 0039（job 3534535）: ep67 step 130 で NaN。** 修正後の損失（global 標準化 + eps）・公式 lr でも、0029（ep65）とほぼ同じ位置で壊れた。
+→ **旧損失は発散の主因ではなかった**。起点も同型: step 95 で gn_raw（bias/LN）が先に基準の 2 倍を超え、step 111〜112 で
+`blocks.1.norm2.weight` / `blocks.2.norm2.weight` の勾配が 18→52 と跳ね、重み側は 1 step 遅れ。約 25 ノード時間。
+
+**MAE 0037（job 3534536）: ep251 から不安定化し、ep319 で崩壊検知（eff_rank 4.04 < 5 が 2 回）で停止。** 約 50 ノード時間。
+- ep250 まで健全（train 0.283、val 0.263、eff_rank 150〜230）。ep250 で grad_norm が 0.3→0.7→4.0（ep251）と跳ね、
+  train_loss 0.286 → 0.42、その後 0.35〜0.55 を往復して戻らず、eff_rank 150 → 25（ep265）→ 4。**本物の不安定化で誤停止ではない**。
+  損失の跳ね返り判定（2.0 倍）は 0.50 < 2×0.28 で発火しなかった。
+- 起点: ep247〜250 の step で `blocks.0.norm1.weight` / `.bias`（最初の block の LayerNorm）の勾配が top1。step 192（ep250）で
+  gn_raw が 1→5.7。ep251 で block 11 の出力 RMS が 16.7 → 71（最大 153）。
+- 成果物: `model_ssl.pt` は checkpoint.pt（最良 val_loss、不安定化の前）から書かれた。`model_ep245/250.pt` もある。
+  終了処理で `to_logger(criterion=None)` が落ちた（MAE は criterion を持たない）→ entry.py を修正済み。
+
+**SimSiam 0038（job 3534537）: ep128/160 で走行中（あと約 5h）。** 損失 -0.956、崩壊はしていないが、backbone の実効ランクは
+ep10 の 132 から 54〜63 に下がって横ばい（DINO 0028 は 557.8）。z の実効ランクは ep20 で 40→ ep60 で 23 → ep128 で 59 と回復傾向。
+2 ビューの一致度 cos_zz 0.96。**部分的な次元崩壊**の可能性（SimSiam でよく報告される）。完走後に判断する。
+
+**BT と MAE に共通するパターン（step テレメトリの新列で初めて見えた）**:
+
+| | BT 0039 | MAE 0037 |
+|---|---|---|
+| backbone 内部の活性（block 出力の RMS） | 単調に増大: block 0 は ep10 の 0.74 → ep66 の 14.4、block 11 は 6.9 → 27 | patch_embed の出力が ep10 の 0.8 → ep249 の 61、block 0 は 1.2 → 20 |
+| LN ゲインの最小 | 0.98 → 0.33（wd なしでも縮む） | 1.0 → 0.29 |
+| 発散の起点 | 初期 block の LN（blocks.1/2.norm2）の勾配スパイク | 最初の block の LN（blocks.0.norm1）の勾配スパイク |
+
+→ **ViT の residual stream / 入力側の活性が学習とともに膨らみ、LN が縮んでそれを打ち消す状態が続き、
+初期 block の LN パラメータの勾配が臨界を越える**、という同じ型に見える（ViT の大 lr 学習の既知の不安定性と整合）。
+DINO は clip 0.3 + lr 半減で完走している。BT と MAE で手法が違っても同じ場所から壊れるので、手法固有の損失ではなく
+**ViT-B + 本データ + 大 lr** の組み合わせの問題の可能性が高い。
 
 ### 📝 崩壊・発散の原因究明のために何を記録しているか（2026-10-12 点検・拡充）
 
