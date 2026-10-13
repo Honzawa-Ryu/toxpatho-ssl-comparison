@@ -65,6 +65,21 @@ def build_scheduler(optimizer, num_epoch, warmup_t, lr_min, warmup_lr_init):
         warmup_t=warmup_t, warmup_lr_init=warmup_lr_init, warmup_prefix=True)
 
 
+def configure_bt_criterion(criterion, args):
+    """BT の損失の CLI 設定を criterion に入れる(構築時と、state.pt から復元した後の両方で呼ぶ)。
+
+    - --bt_lambda: 0 ならクラス既定(5e-3 = 論文値)。⚠️ 2026-10-13 まではこの引数がどこにも配線されて
+      おらず、常にクラス既定の 5e-3 だった(全 BT 実験が 5e-3 を指定していたので結果は同じ)。
+    - --bt_grad_ref_world: 勾配を world_size / ref 倍(barlowtwins._GradScale)。0 なら 1 倍(従来どおり)。
+    """
+    if getattr(args, 'bt_lambda', 0.0) > 0:
+        criterion.lambda_param = args.bt_lambda
+    ref = getattr(args, 'bt_grad_ref_world', 0)
+    criterion.grad_scale = distributed.world_size() / ref if ref > 0 else 1.0
+    print(f"BT criterion: lambda={criterion.lambda_param}, grad_scale={criterion.grad_scale:.4g} "
+          f"(world_size={distributed.world_size()}, bt_grad_ref_world={ref or 'off'})")
+
+
 # prepare model
 def prepare_model(
         ctx: RunContext,
@@ -154,6 +169,8 @@ def prepare_model(
         # 学習には影響しない(no_grad の統計を記録するだけ)。再開時は entry.py が復元後の
         # criterion に同じ値を設定し直す。
         criterion.collect_stats = args.bt_step_log or args.step_log
+    if args.ssl_name == "barlowtwins":
+        configure_bt_criterion(criterion, args)
     if args.model_path:
         # warm start: load weights only (student+teacher, via model.state_dict()) from a
         # finished run's model_ssl.pt. Unlike --resume, optimizer/scheduler/epoch counter

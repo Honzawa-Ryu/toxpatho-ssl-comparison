@@ -74,6 +74,29 @@ class BarlowTwinsProjectionHead(ProjectionHead):
             (hidden_dim, output_dim, None, None),
         ])
 
+class _GradScale(torch.autograd.Function):
+    """順伝播は恒等、逆伝播で勾配を scale 倍する(ログに出る損失の値は変えない)。
+
+    なぜ要るか(2026-10-13): 公式実装(と本実装)は c を各 rank の局所寄与の和として all_reduce する
+    (autograd 非対応の in-place all_reduce)。そのため各 rank の勾配は「真の勾配のうち自分のサンプルの寄与」で、
+    DDP がそれを rank 間で**平均**するので、パラメータの勾配は **真の勾配 / world_size** になる。
+    LARS の重みグループは更新が勾配の大きさに依らないので影響しないが、bias/LN グループ
+    (--lars_exclude_bias_bn、生の勾配 × lr_bias)と、LARS の trust ratio 内の wd 項との比は world_size で変わる。
+    公式は 16 GPU で学習している(README: "approximately 7 days on 16 v100 GPUs")ので、
+    公式の lr_biases は「真の勾配 / 16」に対する値。--bt_grad_ref_world 16 で勾配を world_size / 16 倍すると、
+    ノード数に依らず公式と同じ実効更新になる(ノード数を変えて高速化しても結果が変わらない)。
+    """
+
+    @staticmethod
+    def forward(ctx, x, scale):
+        ctx.scale = scale
+        return x.view_as(x)
+
+    @staticmethod
+    def backward(ctx, g):
+        return g * ctx.scale, None
+
+
 class BarlowTwinsLoss(torch.nn.Module):
     """Implementation of the Barlow Twins Loss from Barlow Twins[0] paper.
     This code specifically implements the Figure Algorithm 1 from [0].
@@ -101,6 +124,7 @@ class BarlowTwinsLoss(torch.nn.Module):
     fp32 = False
     collect_stats = False
     last_stats = None
+    grad_scale = 1.0   # --bt_grad_ref_world(下の _GradScale)。旧 pickle 互換のためクラス属性で既定値を持つ
 
     def __init__(
         self, 
@@ -143,9 +167,13 @@ class BarlowTwinsLoss(torch.nn.Module):
         # autocast 下では Linear の出力 z がそもそも bf16 で返るので、損失側で .float() するだけ
         # では足りない。ヘッドの Linear も fp32 にする必要がある(BarlowTwins.fp32_head)。
         if not self.fp32:
-            return self._compute(z_a, z_b)
-        with torch.amp.autocast(device_type=z_a.device.type, enabled=False):
-            return self._compute(z_a.float(), z_b.float())
+            loss = self._compute(z_a, z_b)
+        else:
+            with torch.amp.autocast(device_type=z_a.device.type, enabled=False):
+                loss = self._compute(z_a.float(), z_b.float())
+        if self.grad_scale != 1.0:
+            loss = _GradScale.apply(loss, self.grad_scale)
+        return loss
 
     # 公式(facebookresearch/barlowtwins main.py)は損失の直前を `nn.BatchNorm1d(D, affine=False)` で標準化し、
     # モデル全体を SyncBN 化する = **global batch の平均・分散(biased)+ eps 1e-5**。

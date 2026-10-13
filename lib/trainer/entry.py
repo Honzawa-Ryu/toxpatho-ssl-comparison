@@ -26,7 +26,7 @@ import lib.sslmodel as sslmodel
 from lib.trainer import distributed
 from lib.trainer.context import RunContext, build_context
 from lib.trainer.optim import override_lr_after_resume
-from lib.trainer.model import prepare_model
+from lib.trainer.model import prepare_model, configure_bt_criterion
 from lib.trainer.loop import train, diagnose_gpu_bound
 
 
@@ -126,6 +126,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument('--n_local_crops', type=int, default=0)        # multicrop local views (SwAV 6 / DINO 8); 0 = disabled
     parser.add_argument('--local_crop_size', type=int, default=96)     # multicrop local crop resolution
     parser.add_argument('--proj_dim', type=int, default=0)             # Barlow Twins: projector width (paper: 8192); 0 = class default
+    # Barlow Twins: 勾配を world_size / この値 倍する(0 = 無効 = 従来どおり「真の勾配 / world_size」)。
+    # 公式は 16 GPU。16 を渡すとノード数に依らず公式と同じ実効更新になる(lib/sslmodel/models/barlowtwins.py _GradScale)。
+    parser.add_argument('--bt_grad_ref_world', type=int, default=0)
     parser.add_argument('--bt_lambda', type=float, default=0.0)        # Barlow Twins: off-diagonal loss weight (paper: 5e-3); 0 = class default
     parser.add_argument('--bt_fp32_head', action='store_true')         # Barlow Twins: 投影ヘッドと損失だけ autocast を切って fp32 で計算(bf16 の標準化の桁落ち対策。exp 0029 の NaN の仮説)
     # 全手法共通の step テレメトリ: 損失・grad_norm・グループ別 grad_norm・上位テンソル(+ BT / SimSiam は崩壊統計)を
@@ -224,6 +227,7 @@ def _run(ctx: RunContext):
             if args.ssl_name in ('barlowtwins', 'simsiam'):
                 criterion.collect_stats = args.bt_step_log or args.step_log
             if args.ssl_name == 'barlowtwins':
+                configure_bt_criterion(criterion, args)
                 # state.pt から復元した criterion は pickle 時点の属性を持つ(古い state.pt は
                 # fp32 / collect_stats を持たない)ので、今回の CLI の値で設定し直す。
                 # これを忘れると --bt_fp32_head を付けて再開しても損失が bf16 のまま走る。

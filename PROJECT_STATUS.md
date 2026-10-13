@@ -13,7 +13,7 @@
 > 実行は向こう。**コミットに「実装済み・未実行」が含まれるのは想定どおり。**
 > 詳細は [CLAUDE.md](CLAUDE.md)。
 
-最終更新: 2026-10-13（3 本の初回結果: **BT 0039 は ep67 で NaN**（損失修正では止まらず）、**MAE 0037 は ep251 から不安定化し ep319 に eff_rank<5 で停止**、**SimSiam 0038 は ep128/160 で走行中**。どちらの発散も起点は初期 block の LayerNorm の勾配スパイクで、backbone 内部の活性の単調増大を伴う）
+最終更新: 2026-10-13（律速の切り分け用プロファイル **0041** を定義（1 ノード・1h、qsub 未）。**BT の勾配が world_size で割られ、bias/LN の実効 lr がノード数に依存する**ことを確認し `--bt_grad_ref_world` を追加。MAE 0040（lr 半減）定義済み）
 
 ### 2026-09-30: Barlow Twins (ViT-B/16) の準備 — NaN 即停止を実装・学習は未投入
 
@@ -191,6 +191,35 @@ aug は他手法と共通の病理向け既定、projector 隠れ層幅は backb
   (2) step ごとの CPU 側のオーバーヘッド（LARS が Python のパラメータ毎ループ、step ごとの `.item()` 同期、テレメトリ）、
   (3) H2D 転送と collate（fp32 で 1 step 約 300MB）。**どれかは GPU のプロファイルを取らないと決められない**。
 - **確実に削れるもの**: epoch 末の val_loss（毎 epoch、2 worker の評価ローダ）が BT で 17%、MAE で 28%。
+
+### 📏 1 GPU あたりのバッチ（ノード数）を変えても結果は変わらないか（2026-10-13）
+
+global batch を固定してノード数で割り直す場合:
+- **MAE / SimSiam / DINO: 変わらない**（データの順序と乱数が変わるだけ）。損失はサンプルごとの平均で、DDP は勾配を rank 間で
+  平均し、BN は SyncBN で global batch の統計を使う。
+- **BT: 変わる（修正を追加）**。公式実装（と本実装）は相関行列 c を各 rank の局所寄与の和として、**autograd 非対応の
+  all_reduce** で集約する（公式 main.py: `c.div_(args.batch_size); torch.distributed.all_reduce(c)`）。各 rank の勾配は
+  「自分のサンプルの寄与」だけで、DDP がそれを平均するので、**パラメータの勾配 = 真の勾配 / world_size** になる。
+  LARS の重みグループは更新が勾配の大きさに依らないので影響しないが、**bias/LN グループ（生の勾配 × lr_bias）は
+  ノード数で実効 lr が変わる**（trust ratio の中の wd 項との比も変わる）。
+  - 公式は **16 GPU**（README: "Training time is approximately 7 days on 16 v100 GPUs."）なので、公式の lr_biases 0.0048×8 は
+    「真の勾配 / 16」に対する値。**8 GPU の 0029 / 0039 は bias/LN の実効更新が公式の 2 倍**、lr_bias 1/4 の 0034 は公式の 1/2 だった。
+    0029（2 倍）は ep65、0034（1/2）は ep84 で発散しているので、これだけが原因ではないが、公式との対応はずれていた。
+  - **`--bt_grad_ref_world 16`** を追加: 損失の値は変えず、逆伝播で勾配を world_size / 16 倍する（`barlowtwins._GradScale`）。
+    これで勾配が「真の勾配 / 16」になり、ノード数に依らず公式と同じ実効更新になる。既定は 0（従来どおり）。
+    gloo 2 プロセスの CPU テストで、DDP 平均後の勾配が world_size に依らず「真の勾配 / 16」になることを確認。
+  - 0035 は 8 ノード・ref なしのまま（clip 1.0 の閾値を 0034 の 8 ノードでの勾配の実測から決めたため）。ノード数を変えるときは
+    ref を付け、lr_bias と clip の閾値を換算し直す。
+- 併せて見つけた配線漏れ: **`--bt_lambda` がどこにも使われていなかった**（常にクラス既定の 5e-3 = 論文値。全 BT 実験が 5e-3 を
+  指定していたので結果は同じ）。`configure_bt_criterion` で構築時・resume 後とも反映するよう修正。
+
+### ⏱️ プロファイル 0041（2026-10-13 定義・未投入）
+
+`experiments/0041_20261013_profile_throughput/`（`scripts/train/profile_throughput.py`）。1 ノード・1 GPU・walltime 1h。
+BT 0035（256/512/1024）・SimSiam 0038（256/512/1024）・MAE 0040（512/1024/2048）について、合成データでの GPU 上限・
+forward+backward と optimizer.step の内訳・DataLoader 単独の供給能力・本番と同じ train_epoch の速度・GPU メモリのピークを測り、
+本番のバッチでは torch.profiler の内訳を書く。ログインノードの CPU スモークで最後まで通ることを確認
+（途中で見つけた: persistent_workers の DataLoader の iterator を使い回すと reset 待ちで止まる → フェーズごとに作り直す）。
 
 ### 💥 3 本の初回結果（2026-10-13 判読）
 

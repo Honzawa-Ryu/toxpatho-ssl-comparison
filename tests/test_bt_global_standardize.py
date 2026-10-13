@@ -40,6 +40,22 @@ def _worker(rank, world, port, path, z_a, z_b):
     dist.destroy_process_group()
 
 
+def _worker_param(rank, world, port, path, x_a, x_b, w0, ref):
+    """DDP と同じく、パラメータの勾配を rank 間で平均したものを保存する。"""
+    os.environ.update(MASTER_ADDR='127.0.0.1', MASTER_PORT=str(port))
+    dist.init_process_group('gloo', rank=rank, world_size=world)
+    n = x_a.size(0) // world
+    w = w0.clone().requires_grad_(True)
+    crit = BarlowTwinsLoss(lambda_param=LAMBDA, gather_distributed=True)
+    crit.grad_scale = world / ref
+    loss = crit(x_a[rank * n:(rank + 1) * n] @ w, x_b[rank * n:(rank + 1) * n] @ w)
+    loss.backward()
+    g = w.grad.clone()
+    dist.all_reduce(g)
+    torch.save({'loss': loss.detach(), 'grad': g / world}, f'{path}/p{rank}.pt')
+    dist.destroy_process_group()
+
+
 def _free_port():
     with socket.socket() as s:
         s.bind(('127.0.0.1', 0))
@@ -65,6 +81,28 @@ class TestGlobalStandardize(unittest.TestCase):
             self.assertAlmostEqual(o['loss'].item(), ref.item(), places=3)
             torch.testing.assert_close(o['ga'], ra.grad[r * n:(r + 1) * n], rtol=1e-4, atol=1e-5)
             torch.testing.assert_close(o['gb'], rb.grad[r * n:(r + 1) * n], rtol=1e-4, atol=1e-5)
+
+    def test_param_grad_is_world_size_invariant_with_ref(self):
+        """--bt_grad_ref_world: DDP 平均後のパラメータ勾配が world_size に依らず「真の勾配 / ref」になる。
+        ref を使わない(grad_scale=1)と「真の勾配 / world_size」になり、ノード数で bias/LN の実効 lr が変わる。"""
+        torch.manual_seed(2)
+        N, D, H, ref = 32, 6, 5, 16
+        x_a, x_b = torch.randn(N, D), torch.randn(N, D)
+        w0 = torch.randn(D, H)
+        w = w0.clone().requires_grad_(True)
+        reference(x_a @ w, x_b @ w).backward()
+        true_grad = w.grad.clone()
+        with tempfile.TemporaryDirectory() as d:
+            mp.spawn(_worker_param, args=(2, _free_port(), d, x_a, x_b, w0, ref), nprocs=2, join=True)
+            g2 = torch.load(f'{d}/p0.pt')['grad']
+        torch.testing.assert_close(g2, true_grad / ref, rtol=1e-4, atol=1e-6)
+        crit = BarlowTwinsLoss(lambda_param=LAMBDA)        # world 1、ref 16
+        crit.grad_scale = 1 / ref
+        w1 = w0.clone().requires_grad_(True)
+        loss = crit(x_a @ w1, x_b @ w1)
+        loss.backward()
+        torch.testing.assert_close(w1.grad, true_grad / ref, rtol=1e-4, atol=1e-6)
+        self.assertAlmostEqual(loss.item(), reference(x_a @ w0, x_b @ w0).item(), places=4, msg="ログの損失値は変わらない")
 
     def test_single_process_matches_reference(self):
         torch.manual_seed(1)
