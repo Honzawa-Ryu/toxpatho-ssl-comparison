@@ -13,7 +13,7 @@
 > 実行は向こう。**コミットに「実装済み・未実行」が含まれるのは想定どおり。**
 > 詳細は [CLAUDE.md](CLAUDE.md)。
 
-最終更新: 2026-10-13（**0042 で torch.compile の効果を確認: 1 GPU の学習ループで BT +20%・MAE +8%・SimSiam +6%**。BT 0035 と MAE 0040 に `--compile_blocks` を付けた（qsub 未）。SimSiam 0038 は ep144/160）
+最終更新: 2026-10-13（**BT 0035（job 3543895）・MAE 0040（job 3543896）を投入**、予定開始 10/14 01:58。SimSiam 0038 は走行中）
 
 ### 2026-09-30: Barlow Twins (ViT-B/16) の準備 — NaN 即停止を実装・学習は未投入
 
@@ -212,6 +212,12 @@ global batch を固定してノード数で割り直す場合:
     ref を付け、lr_bias と clip の閾値を換算し直す。
 - 併せて見つけた配線漏れ: **`--bt_lambda` がどこにも使われていなかった**（常にクラス既定の 5e-3 = 論文値。全 BT 実験が 5e-3 を
   指定していたので結果は同じ）。`configure_bt_criterion` で構築時・resume 後とも反映するよう修正。
+
+### 🚀 BT 0035 / MAE 0040 を投入（2026-10-13）
+
+BT 0035（lr_bias 1/4 + clip 1.0 + 修正後の損失 + compile）= **job 3543895**、MAE 0040（lr 半減 + compile）= **job 3543896**。
+いずれも 8 ノード・48h、予定開始 10/14 01:58。確認すること: `compile_blocks:` と `TRITON_LIBCUDA_PATH` のログ行、最初の数 epoch の
+elapsed_time（compile の本番での効果）、BT は ep85〜100 越え、MAE は ep250 越え（0037 の不安定化の位置）と block 出力・LN ゲインの推移。
 
 ### 🚀 高速化 1〜3 を実装（2026-10-13、ユーザー決定: ノード半減と val の間引きはしない）
 
