@@ -1,6 +1,10 @@
 #!/bin/bash
 # =====================================================
-# exp 0041 — 学習の律速を切り分けるプロファイル(1 ノード・1 GPU・約 30〜40 分)。学習はしない。
+# exp 0041 — 学習の律速を切り分けるプロファイル(debug-g・1 ノード・1 GPU、手法ごとに 1 本 × 30 分)。学習はしない。
+#
+# ■ debug-g を使う(ユーザー提案 2026-10-13): 計測は短いのでデバッグ用キューで足りる。debug-g の walltime は 30 分
+#   (exp 0019 で 00:30:00 の投入を確認済み)。起動時の 141GB のローカル SSD へのコピーに約 7 分かかるので、
+#   1 本に 3 手法を詰めると 30 分を超えうる → **手法ごとに 1 本ずつ投入する**(PROFILE_SPEC で切り替え)。
 #
 # 何を測るか(scripts/train/profile_throughput.py):
 #   BT 0035 / SimSiam 0038 / MAE 0040 の run_slurm.sh と同じ引数でモデル・optimizer・損失を組み、
@@ -24,13 +28,13 @@
 #
 # 準備と投入:
 #   bash experiments/0041_20261013_profile_throughput/preflight.sh
-#   qsub experiments/0041_20261013_profile_throughput/run_slurm.sh   # ⚠️ ユーザー承認後
+#   for m in bt simsiam mae; do qsub -v PROFILE_SPEC=$m experiments/0041_20261013_profile_throughput/run_slurm.sh; done   # ⚠️ ユーザー承認後
 # =====================================================
 #PBS -N 0041_profile
-#PBS -q regular-g
+#PBS -q debug-g
 #PBS -W group_list=gd43
 #PBS -l select=1
-#PBS -l walltime=01:00:00
+#PBS -l walltime=00:30:00
 #PBS -j oe
 #PBS -o logs/0041_20261013_profile_throughput/
 #PBS -e logs/0041_20261013_profile_throughput/
@@ -53,12 +57,15 @@ DATA_SUBDIRS=(
     "ssl_patches"
 )
 
-# 先頭のバッチが本番の 1 GPU あたりのバッチ(profiler の内訳はそこだけ取る)
+# 先頭のバッチが本番の 1 GPU あたりのバッチ(profiler の内訳はそこだけ取る)。qsub -v PROFILE_SPEC=bt|simsiam|mae で選ぶ。
+case "${PROFILE_SPEC:-}" in
+  bt)      SPEC="0035_20261011_bt_vitb16_lrbias_quarter_clip1:256,512,1024" ;;
+  simsiam) SPEC="0038_20261012_simsiam_vitb16_step_matched:256,512,1024" ;;
+  mae)     SPEC="0040_20261013_mae_vitb16_lr_half:512,1024,2048" ;;
+  *) echo "PROFILE_SPEC must be bt|simsiam|mae (qsub -v PROFILE_SPEC=bt ...)" >&2; exit 2 ;;
+esac
 RUN_MODE="single"
 RUN_COMMAND="python ${PROJECT_ROOT}/scripts/train/profile_throughput.py \
-    --out ${PROJECT_ROOT}/outputs/${EXP_NAME} --steps 30 \
-    --exp 0035_20261011_bt_vitb16_lrbias_quarter_clip1:256,512,1024 \
-    --exp 0038_20261012_simsiam_vitb16_step_matched:256,512,1024 \
-    --exp 0040_20261013_mae_vitb16_lr_half:512,1024,2048"
+    --out ${PROJECT_ROOT}/outputs/${EXP_NAME} --steps 30 --exp ${SPEC}"
 
 source "${PROJECT_ROOT}/scripts/slurm_entry.sh"

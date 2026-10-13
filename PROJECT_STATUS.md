@@ -215,7 +215,8 @@ global batch を固定してノード数で割り直す場合:
 
 ### ⏱️ プロファイル 0041（2026-10-13 定義・未投入）
 
-`experiments/0041_20261013_profile_throughput/`（`scripts/train/profile_throughput.py`）。1 ノード・1 GPU・walltime 1h。
+`experiments/0041_20261013_profile_throughput/`（`scripts/train/profile_throughput.py`）。**debug-g**・1 ノード・1 GPU・walltime 30 分を
+**手法ごとに 1 本**（`qsub -v PROFILE_SPEC=bt|simsiam|mae`。起動時の 141GB コピーに約 7 分かかり、1 本に詰めると 30 分を超えうるため）。
 BT 0035（256/512/1024）・SimSiam 0038（256/512/1024）・MAE 0040（512/1024/2048）について、合成データでの GPU 上限・
 forward+backward と optimizer.step の内訳・DataLoader 単独の供給能力・本番と同じ train_epoch の速度・GPU メモリのピークを測り、
 本番のバッチでは torch.profiler の内訳を書く。ログインノードの CPU スモークで最後まで通ることを確認
