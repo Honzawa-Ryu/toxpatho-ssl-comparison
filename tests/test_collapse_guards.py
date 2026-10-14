@@ -391,6 +391,7 @@ data_src = open(os.path.join(REPO_ROOT, "lib/trainer/data.py"), encoding="utf-8"
 _check("評価用 DataLoader の worker は --eval_workers(既定 8)", "num_workers=getattr(args, 'eval_workers', 8)" in data_src
        and "add_argument('--eval_workers', type=int, default=8)" in entry_src)
 _check("--compile_blocks は prepare_model で適用される", "compile_blocks(model)" in model_src)
+_check("wandb は init_wandb 経由(resume で同じ run id)", "run = init_wandb(args, DIR_NAME)" in entry_src and 'resume="allow" if run_id else None' in entry_src)
 # --step_log(2026-10-12): 全手法で step テレメトリ。BT / SimSiam は criterion の統計も
 _check("CLI --step_log が定義されている", "add_argument('--step_log'" in entry_src)
 _check("model.py は BT と SimSiam の criterion に collect_stats を設定する",

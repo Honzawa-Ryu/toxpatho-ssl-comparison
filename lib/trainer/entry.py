@@ -173,6 +173,33 @@ def main(ctx: RunContext):
         distributed.teardown()
 
 
+def init_wandb(args, dir_name):
+    """WandB の run を始める(rank0 だけが呼ぶ)。--resume で state.pt から再開するときは、前のジョブと同じ run に続けて書く。
+
+    run の id を `{dir_name}/wandb_run_id.txt` に残し、再開時はそれを `id=` / `resume="allow"` で渡す。計算ノードは
+    offline なので、ジョブごとに別の offline-run ディレクトリができるが、同じ id なので `wandb sync` すると WandB 上で
+    1 本の run につながる(2026-10-14、48h の walltime をまたぐ学習を 1 本で見たいため)。
+    epoch は step=epoch で記録しているので、再開後も step は増え続ける。ただし前のジョブが「epoch のログは出したが
+    state.pt を保存する前に殺された」場合、その epoch は再開後にもう一度記録され、WandB は step の重複を警告して捨てる。
+    """
+    id_path = os.path.join(dir_name, 'wandb_run_id.txt')
+    run_id = None
+    if args.resume and os.path.exists(id_path) and os.path.exists(os.path.join(dir_name, 'state.pt')):
+        with open(id_path) as f:
+            run_id = f.read().strip() or None
+    run = wandb.init(project="tox-patho-tggate",
+                     entity="benzelongji-the-university-of-tokyo",
+                     name=f"{args.note}_{args.ssl_name}_{args.model_name}_lr{args.lr}_epoch{args.num_epoch}_patience{args.patience}_delta{args.delta}_freeze{args.freeze_backbone}",
+                     config=args.__dict__,
+                     id=run_id, resume="allow" if run_id else None)
+    if run_id is None:
+        with open(f'{id_path}.tmp', 'w') as f:
+            f.write(run.id)
+        os.replace(f'{id_path}.tmp', id_path)
+    print(f"wandb run id={run.id} ({'resumed' if run_id else 'new'}; {id_path})")
+    return run
+
+
 def _run(ctx: RunContext):
     args, DEVICE, DIR_NAME, LOGGER = ctx.args, ctx.device, ctx.dir_name, ctx.logger
     torch.backends.cudnn.benchmark = True
@@ -183,10 +210,7 @@ def _run(ctx: RunContext):
     # 単一プロセス実行では distributed.is_main_process() は常に True で従来と同じ。
     run = None
     if distributed.is_main_process():
-        run = wandb.init(project="tox-patho-tggate",
-                         entity="benzelongji-the-university-of-tokyo",
-                         name=f"{args.note}_{args.ssl_name}_{args.model_name}_lr{args.lr}_epoch{args.num_epoch}_patience{args.patience}_delta{args.delta}_freeze{args.freeze_backbone}",
-                         config=args.__dict__)
+        run = init_wandb(args, DIR_NAME)
     # 1. Self-Supervised Learning
     model, criterion, optimizer, scheduler, early_stopping, collapse_monitor = prepare_model(
         ctx,

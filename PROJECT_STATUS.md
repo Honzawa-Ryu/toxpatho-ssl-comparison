@@ -220,6 +220,13 @@ global batch を固定してノード数で割り直す場合:
 → **終わった 20 run を同期した**（project `tox-patho-tggate`。8 月の DINO 〜 BT 0039 / MAE 0037・0040 / SimSiam 0038）。走行中の BT 0035
 （`offline-run-20261013_191939-w3v3qip0`）は終了後に同期する。今後は `bash tools/wandb_sync.sh`（未同期の run をすべて。最終更新 10 分以内の run は書き込み中とみなして除く）。
 
+**resume で WandB の run をつなぐ（2026-10-14）**: `init_wandb`（entry.py）が run の id を `outputs/<exp>/wandb_run_id.txt` に残し、`--resume` で
+state.pt から再開するときは同じ id を `resume="allow"` で渡す。offline-run のディレクトリはジョブごとに別だが、同じ id なので
+`wandb sync` すると WandB 上で 1 本の run になる（step=epoch なので続きから伸びる。前のジョブが epoch のログ後・保存前に殺された epoch は
+重複として捨てられる）。走行中の BT 0035 は旧コードで始まったので、id（`w3v3qip0`）を手で `wandb_run_id.txt` に書いておいた
+（resume のジョブは新しいコードで走る）。⚠️ offline の 2 本を sync で 1 本にまとめる動作は、実際の resume（BT 0035 か MAE 0043）の後で WandB 上で確認する。
+`tests/test_wandb_resume.py`（offline、外部に送らない）で id の保存・再利用の条件を固定。
+
 ### 🧪 MAE 0043 と SimSiam の完了判定（2026-10-14）
 
 **MAE 0043**（`experiments/0043_20261014_mae_vitb16_lr_half_clip1/`、**2026-10-14 投入: job 3551936**、予定開始 10/15 11:54）: 0040 に **`--clip_grad 1.0`** を足しただけ。BT 0035 で clip が
