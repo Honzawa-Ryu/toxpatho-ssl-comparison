@@ -227,6 +227,14 @@ state.pt から再開するときは同じ id を `resume="allow"` で渡す。o
 （resume のジョブは新しいコードで走る）。⚠️ offline の 2 本を sync で 1 本にまとめる動作は、実際の resume（BT 0035 か MAE 0043）の後で WandB 上で確認する。
 `tests/test_wandb_resume.py`（offline、外部に送らない）で id の保存・再利用の条件を固定。
 
+**BT の損失の内訳を WandB / ログに（2026-10-14）**: `BarlowTwinsLoss` が毎 forward で `[on_diag, off_diag]`（λ を掛ける前）を残し、
+`LossPartsMeter`（loop.py）が epoch 平均を取って `train_on_diag` / `train_off_diag` / `train_off_diag_weighted`（= λ·off_diag、損失への寄与）と
+val の同名を WandB に記録し、ログにも `train_loss_parts:` / `val_loss_parts:` の行で出す。step ごとにデバイス上で足すだけで同期は増えない。
+on/off は全 rank 集約後の相関行列から計算するので全 rank で同一。BT 以外（criterion に内訳が無い）は何も出さない。`tests/test_loss_parts.py`。
+⚠️ 走行中の BT 0035 は旧コードなので、内訳が WandB に出るのは resume した後の epoch から。それ以前の内訳は step テレメトリ
+（`bt_steps_ep*.jsonl` の on_diag / off_diag）に全 epoch 分ある。
+併せて修正: 以前の block 出力のフックの追加で、`diagnose_gpu_bound`（`--diagnose_only`）が未定義の `bt_probe` を参照していた（NameError になる）。
+
 ### 🧪 MAE 0043 と SimSiam の完了判定（2026-10-14）
 
 **MAE 0043**（`experiments/0043_20261014_mae_vitb16_lr_half_clip1/`、**2026-10-14 投入: job 3551936**、予定開始 10/15 11:54）: 0040 に **`--clip_grad 1.0`** を足しただけ。BT 0035 で clip が

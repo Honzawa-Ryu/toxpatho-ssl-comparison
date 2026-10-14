@@ -125,6 +125,10 @@ class BarlowTwinsLoss(torch.nn.Module):
     collect_stats = False
     last_stats = None
     grad_scale = 1.0   # --bt_grad_ref_world(下の _GradScale)。旧 pickle 互換のためクラス属性で既定値を持つ
+    # 損失の内訳(2026-10-14)。毎 forward で [on_diag, off_diag](λ を掛ける前、detach 済み)を入れる。
+    # loop.py が epoch 平均を取って WandB / ログに出す(train と val)。on/off は全 rank 集約後の c から計算するので全 rank 同一。
+    PART_NAMES = ("on_diag", "off_diag")
+    last_parts = None
 
     def __init__(
         self, 
@@ -236,6 +240,7 @@ class BarlowTwinsLoss(torch.nn.Module):
         on_diag = (diag - 1).pow(2).sum()
         off_diag = c.pow(2).sum() - diag.pow(2).sum()
         loss = on_diag + self.lambda_param * off_diag
+        self.last_parts = torch.stack([on_diag.detach().float(), off_diag.detach().float()])
 
         if self.collect_stats:
             self._record_stats(std_a, std_b, mean_a, mean_b, diag, on_diag, off_diag)

@@ -392,6 +392,9 @@ _check("評価用 DataLoader の worker は --eval_workers(既定 8)", "num_work
        and "add_argument('--eval_workers', type=int, default=8)" in entry_src)
 _check("--compile_blocks は prepare_model で適用される", "compile_blocks(model)" in model_src)
 _check("wandb は init_wandb 経由(resume で同じ run id)", "run = init_wandb(args, DIR_NAME)" in entry_src and 'resume="allow" if run_id else None' in entry_src)
+_check("損失の内訳を train と val の両方で WandB に送る", "**train_parts," in loop_src and "**val_parts, \"val_loss\"" in loop_src)
+_check("diagnose_gpu_bound は bt_probe を参照しない(未定義)",
+       "bt_probe" not in loop_src[loop_src.index("def diagnose_gpu_bound"):loop_src.index("def norm_gain_mean")])
 # --step_log(2026-10-12): 全手法で step テレメトリ。BT / SimSiam は criterion の統計も
 _check("CLI --step_log が定義されている", "add_argument('--step_log'" in entry_src)
 _check("model.py は BT と SimSiam の criterion に collect_stats を設定する",

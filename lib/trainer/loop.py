@@ -24,6 +24,43 @@ from lib.trainer.bt_telemetry import (write_epoch as write_bt_epoch, StepProbe, 
                                      STAT_NAMES as BT_STAT_NAMES, SIMSIAM_STAT_NAMES)
 
 
+class LossPartsMeter:
+    """損失の内訳(criterion.PART_NAMES / criterion.last_parts を持つ損失、今は BT)の epoch 平均。
+
+    step ごとにデバイス上で足すだけで .item() の同期は増やさない(epoch 末に 1 回だけ取り出す)。
+    BT は on_diag(不変性の項)・off_diag(冗長性削減の項、λ を掛ける前)と、λ·off_diag(損失への寄与)を出す。
+    """
+
+    def __init__(self, criterion):
+        self.names = getattr(criterion, 'PART_NAMES', None)
+        self.sum, self.n = None, 0
+
+    def before(self, criterion):
+        if self.names:
+            criterion.last_parts = None     # 古い値を二重に数えない
+
+    def add(self, criterion):
+        parts = getattr(criterion, 'last_parts', None) if self.names else None
+        if parts is None:
+            return
+        self.sum = parts.clone() if self.sum is None else self.sum + parts
+        self.n += 1
+
+    def result(self, prefix, criterion):
+        if self.sum is None or self.n == 0:
+            return {}
+        vals = (self.sum / self.n).tolist()
+        out = {f'{prefix}_{k}': v for k, v in zip(self.names, vals)}
+        lam = getattr(criterion, 'lambda_param', None)
+        if lam is not None and 'off_diag' in self.names:
+            out[f'{prefix}_off_diag_weighted'] = lam * vals[self.names.index('off_diag')]
+        return out
+
+
+def _fmt_parts(parts):
+    return ', '.join(f'{k}: {v:.4g}' for k, v in parts.items())
+
+
 # train epoch
 
 def train_epoch(ctx: RunContext, model, data_loader, criterion, optimizer, epoch, num_epoch=None):
@@ -50,6 +87,7 @@ def train_epoch(ctx: RunContext, model, data_loader, criterion, optimizer, epoch
     # (片 rank だけ抜けると他 rank が DDP の集合通信で hang する)。
     stop_on_nonfinite = getattr(ctx.args, 'collapse_early_stop', False)
     first_nonfinite = None
+    parts_meter = LossPartsMeter(criterion)
     # DINOのteacher momentum/温度スケジュールはstep単位で更新する(論文と同じ粒度)。
     # 通算stepの純関数として計算するのでresume時も正しい値になる。
     niter_per_ep = len(data_loader)
@@ -64,8 +102,10 @@ def train_epoch(ctx: RunContext, model, data_loader, criterion, optimizer, epoch
         optimizer.zero_grad(set_to_none=True)
         if bt_probe is not None:
             bt_probe.active = True    # この forward の block 出力だけを測る
+        parts_meter.before(criterion)
         with torch.amp.autocast(device_type="cuda", dtype=torch.bfloat16):
             loss = ssl_class.calc_loss(model, data, criterion)
+        parts_meter.add(criterion)
         if bt_probe is not None:
             bt_probe.active = False
         if bt_stats is not None and getattr(criterion, 'last_stats', None) is not None:
@@ -138,6 +178,8 @@ def train_epoch(ctx: RunContext, model, data_loader, criterion, optimizer, epoch
             write_clip_epoch(ctx.dir_name, epoch + 1, clip_grad, clip_norms, grad_norms)
         except OSError as exc:
             ctx.logger.logger.warning(f'Clipping telemetry could not be saved: {exc}')
+    # 損失の内訳の epoch 平均(BT の on_diag / off_diag)。戻り値を変えずに ctx 経由で train() に渡す
+    ctx.train_loss_parts = parts_meter.result('train', criterion)
     return model, np.mean(train_batch_loss), np.mean(grad_norms)
 
 def atomic_torch_save(obj, path):
@@ -202,12 +244,8 @@ def diagnose_gpu_bound(ctx: RunContext, model, criterion, optimizer, batch_size,
             data = [torch.randn(batch_size, 3, *size, device=DEVICE),
                     torch.randn(batch_size, 3, *size, device=DEVICE)]
         optimizer.zero_grad(set_to_none=True)
-        if bt_probe is not None:
-            bt_probe.active = True    # この forward の block 出力だけを測る
         with torch.amp.autocast(device_type="cuda", dtype=torch.bfloat16):
             loss = ssl_class.calc_loss(model, data, criterion)
-        if bt_probe is not None:
-            bt_probe.active = False
         loss.backward()
         optimizer.step()
     torch.cuda.synchronize()
@@ -250,9 +288,12 @@ def compute_val_loss(ctx: RunContext, model, criterion, loader, max_batches=40):
     model.eval()
     saved_center = criterion.center.clone() if hasattr(criterion, 'center') else None
     losses = []
+    parts_meter = LossPartsMeter(criterion)
     for i, data in enumerate(loader):
+        parts_meter.before(criterion)
         with torch.amp.autocast(device_type="cuda", dtype=torch.bfloat16):
             loss = ssl_class.calc_loss(model, data, criterion)
+        parts_meter.add(criterion)
         losses.append(loss.item())
         if i + 1 >= max_batches:
             break
@@ -260,6 +301,7 @@ def compute_val_loss(ctx: RunContext, model, criterion, loader, max_batches=40):
         criterion.center.copy_(saved_center)
     if was_training:
         model.train()
+    ctx.val_loss_parts = parts_meter.result('val', criterion)
     return float(np.mean(losses)) if losses else float("nan")
 
 # train
@@ -330,8 +372,12 @@ def train(ctx: RunContext, model, criterion, optimizer, scheduler, early_stoppin
             f'ln_gain: {ln_gain:.4f}{teacher_state}{lr_groups}'
         )
         LOGGER.logger.info('elapsed_time: {:.2f} min'.format((time.time() - start)/60))
+        train_parts = getattr(ctx, 'train_loss_parts', {}) or {}
+        if train_parts:
+            LOGGER.logger.info(f'train_loss_parts: {_fmt_parts(train_parts)}')
         if run:
             run.log({
+                **train_parts,
                 "train_loss": train_epoch_loss,
                 "learning_rate": current_lr,
                 "grad_norm": grad_norm,
@@ -392,8 +438,11 @@ def train(ctx: RunContext, model, criterion, optimizer, scheduler, early_stoppin
             f'val_loss: {val_epoch_loss:.4f}  (train {train_epoch_loss:.4f}, '
             f'train-val gap {train_epoch_loss - val_epoch_loss:+.4f})'
         )
+        val_parts = getattr(ctx, 'val_loss_parts', {}) or {}
+        if val_parts:
+            LOGGER.logger.info(f'val_loss_parts: {_fmt_parts(val_parts)}')
         if run:
-            run.log({"val_loss": val_epoch_loss,
+            run.log({**val_parts, "val_loss": val_epoch_loss,
                      "train_val_gap": train_epoch_loss - val_epoch_loss}, step=epoch)
         # チェックポイント保存・logger.pkl書き出しはrank0限定
         # （複数プロセスが同じファイルへ競合書き込みするのを防ぐ。
