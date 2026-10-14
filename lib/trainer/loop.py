@@ -8,6 +8,7 @@
 """
 import math
 import os
+import re
 import time
 
 import numpy as np
@@ -55,6 +56,44 @@ class LossPartsMeter:
         if lam is not None and 'off_diag' in self.names:
             out[f'{prefix}_off_diag_weighted'] = lam * vals[self.names.index('off_diag')]
         return out
+
+
+# step テレメトリの epoch 要約として WandB に出す列(2026-10-14)。jsonl を開かなくても崩壊・発散の前兆をグラフで追えるように。
+# 値は epoch 内の step の平均。スパイクを見たいものは max、潰れを見たいものは min も出す。
+STEP_SUMMARY = {
+    # 全手法(StepProbe)
+    'gn_raw': ('mean', 'max'), 'gn_lars': ('mean',), 'gn_head': ('mean',),
+    'upd_raw': ('mean', 'max'), 'upd_w': ('mean',), 'upd_ratio_max': ('max',),
+    'ln_gain_mean': ('mean',), 'ln_gain_min': ('min',),
+    'act_patch': ('mean', 'max'), 'act_b0': ('mean', 'max'),
+    # BT
+    'z_std_min': ('min',), 'n_zero_std': ('max',), 'z_ratio_max': ('max',), 'c_diag_mean': ('mean',),
+    # SimSiam
+    'z_erank': ('mean', 'min'), 'p_erank': ('mean', 'min'), 'cos_zz': ('mean', 'max'), 'cos_pz': ('mean',),
+    'z_nstd_sqrtd': ('mean',),
+}
+
+
+def summarize_steps(columns, rows, grad_norms):
+    """step ごとの行(columns と同じ並びの値のリスト)を epoch 要約の dict にする(WandB のキーは steps/<列>_<集計>)。
+    非有限の値は除く(NaN の step があっても他の step の要約は出す)。最後の block の出力(act_bN)も平均と最大を出す。"""
+    out = {}
+    last_block = max((c for c in columns if re.fullmatch(r'act_b\d+', c)), key=lambda c: int(c[5:]), default=None)
+    wanted = dict(STEP_SUMMARY)
+    if last_block and last_block != 'act_b0':
+        wanted[last_block] = ('mean', 'max')
+    for j, c in enumerate(columns):
+        if c not in wanted:
+            continue
+        v = [r[j] for r in rows if j < len(r) and isinstance(r[j], float) and math.isfinite(r[j])]
+        if not v:
+            continue
+        for agg in wanted[c]:
+            out[f'steps/{c}_{agg}'] = float(np.mean(v) if agg == 'mean' else (max(v) if agg == 'max' else min(v)))
+    g = [x for x in grad_norms if math.isfinite(x)]
+    if g:
+        out['steps/grad_norm_max'] = float(max(g))
+    return out
 
 
 def _fmt_parts(parts):
@@ -163,7 +202,19 @@ def train_epoch(ctx: RunContext, model, data_loader, criterion, optimizer, epoch
             break
     if bt_probe is not None:
         bt_probe.close()   # フックを外す(評価・val の forward を測らない、次 epoch で二重登録しない)
+    ctx.train_step_summary = {}
     if bt_stats is not None:
+        try:
+            # epoch 要約(WandB 用): StepProbe の列 + 手法ごとの崩壊統計
+            stat_names = BT_STAT_NAMES if ctx.args.ssl_name == 'barlowtwins' else SIMSIAM_STAT_NAMES
+            g_rows = bt_probe.rows()
+            s_rows = torch.stack(bt_stats).float().cpu().tolist() if bt_stats else []
+            ctx.train_step_summary = summarize_steps(
+                list(bt_probe.column_names) + list(stat_names),
+                [list(a) + (list(s_rows[i]) if i < len(s_rows) else []) for i, a in enumerate(g_rows)],
+                grad_norms)
+        except Exception as exc:     # 要約は付加情報。失敗しても学習は止めない
+            ctx.logger.logger.warning(f'step summary failed: {exc}')
         try:
             write_param_names(ctx.dir_name, bt_probe.names)
             is_bt = ctx.args.ssl_name == 'barlowtwins'
@@ -375,8 +426,13 @@ def train(ctx: RunContext, model, criterion, optimizer, scheduler, early_stoppin
         train_parts = getattr(ctx, 'train_loss_parts', {}) or {}
         if train_parts:
             LOGGER.logger.info(f'train_loss_parts: {_fmt_parts(train_parts)}')
+        step_summary = getattr(ctx, 'train_step_summary', {}) or {}
+        if step_summary:
+            keys = ('steps/gn_raw_max', 'steps/ln_gain_min_min', 'steps/act_patch_mean', 'steps/act_b0_mean', 'steps/z_erank_mean', 'steps/cos_zz_mean')
+            LOGGER.logger.info('step_summary: ' + ', '.join(f'{k[6:]}: {step_summary[k]:.4g}' for k in keys if k in step_summary))
         if run:
             run.log({
+                **step_summary,
                 **train_parts,
                 "train_loss": train_epoch_loss,
                 "learning_rate": current_lr,

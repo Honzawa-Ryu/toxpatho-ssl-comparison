@@ -395,6 +395,7 @@ _check("wandb は init_wandb 経由(resume で同じ run id)", "run = init_wandb
 _check("損失の内訳を train と val の両方で WandB に送る", "**train_parts," in loop_src and "**val_parts, \"val_loss\"" in loop_src)
 _check("diagnose_gpu_bound は bt_probe を参照しない(未定義)",
        "bt_probe" not in loop_src[loop_src.index("def diagnose_gpu_bound"):loop_src.index("def norm_gain_mean")])
+_check("step テレメトリの epoch 要約を WandB に送る", "**step_summary," in loop_src and "ctx.train_step_summary = summarize_steps(" in loop_src)
 # --step_log(2026-10-12): 全手法で step テレメトリ。BT / SimSiam は criterion の統計も
 _check("CLI --step_log が定義されている", "add_argument('--step_log'" in entry_src)
 _check("model.py は BT と SimSiam の criterion に collect_stats を設定する",

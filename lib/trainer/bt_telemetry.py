@@ -146,7 +146,7 @@ class GradGroupProbe:
 # 先に潰れる / 膨らむか)から始まることがあるので、backbone の各 block の出力の大きさも残す。
 #   upd_w / upd_raw     optimizer.step() 前後の重みの差の L2 ノルム(ndim>1 / ndim<=1)
 #   pn_w / pn_raw       step 後の重みの L2 ノルム
-#   upd_ratio_max/_idx  テンソルごとの ||Δp|| / ||p|| の最大値とそのテンソル(名前は bt_param_names.json)
+#   upd_ratio_max/_idx  テンソルごとの ||Δp|| / ||p(step 前)|| の最大値とそのテンソル(step 前のノルムがほぼ 0 のテンソルは除く)
 #   ln_gain_mean / _min LayerNorm/BN のゲイン(ndim==1 の *.weight。backbone のみ)の平均と最小
 #   act_patch, act_b0..  backbone の patch_embed と各 block の出力の RMS(この step の forward の平均。
 #                        2 ビューの手法は両ビューの平均)。学習中の forward だけを測る(評価・val は測らない)
@@ -221,7 +221,10 @@ class StepProbe(GradGroupProbe):
             dn = torch.stack(torch._foreach_norm(torch._foreach_sub(cur, self._prev))).float()
             pn = torch.stack(torch._foreach_norm(cur)).float()
             w, raw = self.masks[0], self.masks[1]
-            ratio = dn / pn.clamp_min(1e-12)
+            # 相対更新量は step 前の重みで割る。step 前のノルムがほぼ 0 のテンソル(0 初期化の bias の最初の step 等)は
+            # 比が常に 1 になって最大値を占めるので除く(2026-10-14、スモークで upd_ratio_max が 1 に張り付いていた)
+            pn_prev = torch.stack(torch._foreach_norm(self._prev)).float()
+            ratio = torch.where(pn_prev > 1e-6, dn / pn_prev.clamp_min(1e-12), torch.zeros_like(dn))
             rmax, ridx = ratio.max(0)
             gains = torch.stack([p.detach().float().mean() for p, m in zip(cur, self.ln_mask.tolist()) if m]) \
                 if bool(self.ln_mask.any()) else nan.view(1)

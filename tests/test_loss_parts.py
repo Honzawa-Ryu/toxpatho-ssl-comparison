@@ -40,3 +40,19 @@ class TestLossParts(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestStepSummary(unittest.TestCase):
+    def test_aggregates_and_skips_nonfinite(self):
+        from lib.trainer.loop import summarize_steps
+        cols = ['gn_raw', 'ln_gain_min', 'act_b0', 'act_b11', 'z_erank', 'unrelated']
+        rows = [[1.0, 0.5, 2.0, 4.0, 30.0, 9.0], [3.0, 0.4, float('nan'), 6.0, 10.0, 9.0]]
+        s = summarize_steps(cols, rows, [1.0, 5.0, float('nan')])
+        self.assertEqual(s['steps/gn_raw_mean'], 2.0)
+        self.assertEqual(s['steps/gn_raw_max'], 3.0)
+        self.assertEqual(s['steps/ln_gain_min_min'], 0.4)
+        self.assertEqual(s['steps/act_b0_mean'], 2.0, "NaN の step は除く")
+        self.assertEqual(s['steps/act_b11_max'], 6.0, "最後の block も出す")
+        self.assertEqual(s['steps/z_erank_min'], 10.0)
+        self.assertEqual(s['steps/grad_norm_max'], 5.0)
+        self.assertNotIn('steps/unrelated_mean', s)

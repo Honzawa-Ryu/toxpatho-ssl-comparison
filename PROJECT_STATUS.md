@@ -235,6 +235,16 @@ on/off は全 rank 集約後の相関行列から計算するので全 rank で�
 （`bt_steps_ep*.jsonl` の on_diag / off_diag）に全 epoch 分ある。
 併せて修正: 以前の block 出力のフックの追加で、`diagnose_gpu_bound`（`--diagnose_only`）が未定義の `bt_probe` を参照していた（NameError になる）。
 
+**step テレメトリの epoch 要約を WandB に（2026-10-14）**: これまで jsonl を開かないと見えなかった前兆の指標を、epoch ごとに
+`steps/<列>_<mean|max|min>` として WandB に出す（ログにも `step_summary:` の行で主要なものだけ）。対象（`loop.py` の `STEP_SUMMARY`）:
+- 全手法: `gn_raw`（bias/LN の勾配、平均と最大）・`gn_lars`・`gn_head`・`upd_raw`（平均と最大）・`upd_w`・`upd_ratio_max`（最大）・
+  `ln_gain_mean`・`ln_gain_min`（最小）・`act_patch` / `act_b0` / 最後の block（平均と最大）・`grad_norm_max`
+- BT: `z_std_min`（最小）・`n_zero_std`（最大）・`z_ratio_max`（最大）・`c_diag_mean`
+- SimSiam: `z_erank` / `p_erank`（平均と最小）・`cos_zz`（平均と最大）・`cos_pz`・`z_nstd_sqrtd`
+`--step_log` / `--bt_step_log` のときだけ（今の BT・MAE・SimSiam の定義は全部付いている）。非有限の step は除いて集計する。
+併せて `upd_ratio_max` を step 前の重みのノルムで割るよう修正し、step 前がほぼ 0 のテンソル（0 初期化の bias の最初の step）を除いた
+（スモークで最大値が常に 1 に張り付いていた）。`tests/test_loss_parts.py` に要約のテスト、3 手法の CPU スモークでキーが出ることを確認。
+
 ### 🧪 MAE 0043 と SimSiam の完了判定（2026-10-14）
 
 **MAE 0043**（`experiments/0043_20261014_mae_vitb16_lr_half_clip1/`、**2026-10-14 投入: job 3551936**、予定開始 10/15 11:54）: 0040 に **`--clip_grad 1.0`** を足しただけ。BT 0035 で clip が
