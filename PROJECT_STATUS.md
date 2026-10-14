@@ -213,6 +213,13 @@ global batch を固定してノード数で割り直す場合:
 - 併せて見つけた配線漏れ: **`--bt_lambda` がどこにも使われていなかった**（常にクラス既定の 5e-3 = 論文値。全 BT 実験が 5e-3 を
   指定していたので結果は同じ）。`configure_bt_criterion` で構築時・resume 後とも反映するよう修正。
 
+### ☁️ WandB の同期（2026-10-14）
+
+計算ノードは外部に出られないので、ジョブは `WANDB_MODE=offline` で `wandb/offline-run-*` に記録している。アップロード（`wandb sync`）は
+ログインノードでの後処理だが、**これまで一度も実行していなかった**。wandb はログインノードの PATH に無く、コンテナ内（`/usr/local/bin/wandb`）にある。
+→ **終わった 20 run を同期した**（project `tox-patho-tggate`。8 月の DINO 〜 BT 0039 / MAE 0037・0040 / SimSiam 0038）。走行中の BT 0035
+（`offline-run-20261013_191939-w3v3qip0`）は終了後に同期する。今後は `bash tools/wandb_sync.sh`（未同期の run をすべて。最終更新 10 分以内の run は書き込み中とみなして除く）。
+
 ### 🧪 MAE 0043 と SimSiam の完了判定（2026-10-14）
 
 **MAE 0043**（`experiments/0043_20261014_mae_vitb16_lr_half_clip1/`、**2026-10-14 投入: job 3551936**、予定開始 10/15 11:54）: 0040 に **`--clip_grad 1.0`** を足しただけ。BT 0035 で clip が
