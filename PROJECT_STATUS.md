@@ -13,7 +13,7 @@
 > 実行は向こう。**コミットに「実装済み・未実行」が含まれるのは想定どおり。**
 > 詳細は [CLAUDE.md](CLAUDE.md)。
 
-最終更新: 2026-10-15（**SimSiam 0038 は部分的な次元崩壊**（andre01 の診断 0044）→ **0045（AdamW、MoCo v3 の ViT 設定）と 0046（SGD lr 半減、対照）を定義**（qsub 未）。BT 0035 ep1350・MAE 0043 ep953 とも健全）
+最終更新: 2026-10-15（**BT 0035 が 1600/1600 で完走**（最終損失 145.7、eff_rank 519.6、walltime 内）。SimSiam 0045（job 3560662）/ 0046（job 3560646）投入・キュー待ち。MAE 0043 走行中）
 
 ### 2026-09-30: Barlow Twins (ViT-B/16) の準備 — NaN 即停止を実装・学習は未投入
 
@@ -244,6 +244,15 @@ on/off は全 rank 集約後の相関行列から計算するので全 rank で�
 `--step_log` / `--bt_step_log` のときだけ（今の BT・MAE・SimSiam の定義は全部付いている）。非有限の step は除いて集計する。
 併せて `upd_ratio_max` を step 前の重みのノルムで割るよう修正し、step 前がほぼ 0 のテンソル（0 初期化の bias の最初の step）を除いた
 （スモークで最大値が常に 1 に張り付いていた）。`tests/test_loss_parts.py` に要約のテスト、3 手法の CPU スモークでキーが出ることを確認。
+
+### 🏁 BT 0035 完走（2026-10-15 18:48、job 3543895）
+
+**1600/1600 epoch を walltime 内（約 47.7h）で完走**。最終 train_loss 145.69、backbone の実効ランク 519.6（DINO 0028 は 557.8）、uniformity −2.74。
+`model_ssl.pt`（最終 epoch の重み、0.9GB）と `state.json`（1600/1600）あり。resume は不要（resume.sh で確認）。
+ジョブ末尾に `Cgroup memsw limit exceeded` が出ているが、model_ssl.pt と state.pt は 18:48 に書き終わっている（終了処理の段階）。
+WandB 同期済み（run `w3v3qip0`）。**4 手法のうち BT の重みがそろった**（公式からの逸脱: lr_bias 1/4・clip_grad 1.0、`docs/bt_vitb16_vs_paper.md`）。
+
+SimSiam 0045（AdamW）= **job 3560662**、0046（SGD lr 半減）= **job 3560646**、2026-10-15 投入・キュー待ち。
 
 ### 🔬 SimSiam 0038 は部分的な次元崩壊（andre01 の診断 0044、2026-10-15）→ 0045 / 0046
 
