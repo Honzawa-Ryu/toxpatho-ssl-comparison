@@ -480,7 +480,10 @@ def train(ctx: RunContext, model, criterion, optimizer, scheduler, early_stoppin
                 f'eff_rank: {ssl_metrics.get("effective_rank", float("nan")):.2f}, '
                 f'feat_std: {ssl_metrics.get("feature_dim_std", float("nan")):.4f}, '
                 f'alignment: {ssl_metrics.get("alignment", float("nan")):.4f}, '
-                f'uniformity: {ssl_metrics.get("uniformity", float("nan")):.4f}'
+                f'uniformity: {ssl_metrics.get("uniformity", float("nan")):.4f}, '
+                f'n_comp_90: {ssl_metrics.get("n_comp_90", float("nan")):.0f}, '
+                f'pc1_ratio: {ssl_metrics.get("pc1_ratio", float("nan")):.3f}, '
+                f'mean_cos: {ssl_metrics.get("mean_cos", float("nan")):.3f}'
             )
             if run:
                 run.log(ssl_metrics, step=epoch)

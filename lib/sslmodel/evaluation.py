@@ -74,8 +74,13 @@ class SSLEvaluator:
         Z = torch.cat(backbone_embeds)[: self.samples_n]
         metrics = {}
 
-        eff_rank, norm_eff_rank, _ = self._effective_rank(Z)
+        eff_rank, norm_eff_rank, S = self._effective_rank(Z)
         metrics["effective_rank"] = eff_rank
+        # 部分的な次元崩壊の指標(2026-10-15、SimSiam 0038 の診断で使ったものを学習中にも出す)。
+        #   n_comp_90: 分散の 90% を説明する主成分の数(0038 は 4〜7、DINO 0028 は 68〜371)
+        #   pc1_ratio: 第 1 主成分の分散の割合(0038 は 0.39〜0.72、DINO は 0.04〜0.17)
+        #   mean_cos:  別々の画像の特徴の cos の平均(0038 は 0.87〜0.98、DINO は 0.11〜0.83)
+        metrics.update(self._dimensional_collapse(Z, S))
         metrics["normalized_effective_rank"] = norm_eff_rank
         metrics["feature_dim_std"] = Z.std(dim=0).mean().item()
         # ばらつき / 大きさ。完全崩壊で 0 に近づく(effective_rank が 0 になる判定と同じ量)
@@ -132,6 +137,20 @@ class SSLEvaluator:
         entropy = -(p * torch.log(p.clamp_min(1e-30))).sum()
         eff_rank = entropy.exp()
         return eff_rank.item(), (eff_rank / d).item(), S.numpy()
+
+    @staticmethod
+    def _dimensional_collapse(Z: torch.Tensor, S) -> dict:
+        import numpy as np
+        var = np.asarray(S, dtype=np.float64) ** 2
+        if var.sum() <= 0 or not np.isfinite(var).all():
+            return {"n_comp_90": float("nan"), "pc1_ratio": float("nan"), "mean_cos": float("nan")}
+        frac = np.cumsum(var) / var.sum()
+        zn = F.normalize(Z.float(), dim=1)
+        n = zn.size(0)
+        g = zn @ zn.T
+        mean_cos = ((g.sum() - g.diagonal().sum()) / (n * (n - 1))).item() if n > 1 else float("nan")
+        return {"n_comp_90": float(np.searchsorted(frac, 0.9) + 1), "pc1_ratio": float(var[0] / var.sum()),
+                "mean_cos": mean_cos}
 
     def _alignment(self, z1: torch.Tensor, z2: torch.Tensor) -> float:
         z1_n = F.normalize(z1, dim=1)
