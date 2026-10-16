@@ -13,7 +13,7 @@
 > 実行は向こう。**コミットに「実装済み・未実行」が含まれるのは想定どおり。**
 > 詳細は [CLAUDE.md](CLAUDE.md)。
 
-最終更新: 2026-10-16（**MAE 0043 が 2568/2568 で完走**（train 0.267 / val 0.252、eff_rank 192）。**SimSiam 0045（AdamW）は 0038 より悪い崩壊**（ep40 で 90% 成分数 2、画像間 cos 0.999）→ 停止を提案。0046（SGD lr 半減）は 0038 より改善（90% 成分数 13〜14）だが画像間 cos 0.98 で部分崩壊は残る）
+最終更新: 2026-10-16（**BT の val_loss は測り方が壊れていた**（eval モードの BN・実効 N=256）→ 学習と同じ条件で測るよう修正、0035 の 32 スナップショットで測り直す診断 **0047**（debug-g、qsub 未）を定義。MAE 0043 完走。SimSiam 0045 は悪化・0046 は改善傾向）
 
 ### 2026-09-30: Barlow Twins (ViT-B/16) の準備 — NaN 即停止を実装・学習は未投入
 
@@ -244,6 +244,34 @@ on/off は全 rank 集約後の相関行列から計算するので全 rank で�
 `--step_log` / `--bt_step_log` のときだけ（今の BT・MAE・SimSiam の定義は全部付いている）。非有限の step は除いて集計する。
 併せて `upd_ratio_max` を step 前の重みのノルムで割るよう修正し、step 前がほぼ 0 のテンソル（0 初期化の bias の最初の step）を除いた
 （スモークで最大値が常に 1 に張り付いていた）。`tests/test_loss_parts.py` に要約のテスト、3 手法の CPU スモークでキーが出ることを確認。
+
+### 🔍 BT の val_loss は比較にならない値だった（2026-10-16）→ 測り方を修正、スナップショットで測り直す
+
+**症状**: 0035 の val_loss は ep1 から最後まで 8,500〜15,000（train は 8,542 → 145.7）で、`train_val_gap`（= train − val）は −12,000 前後。
+終盤は上昇傾向。BT の損失の天井は D = 8192（相関が消えた状態）なので、val では 2 ビューの相関がほぼ無いと測られていた。
+SimSiam 0038（val −0.97 / train −0.95）と MAE 0043（0.252 / 0.267）は val が train を追っている → BT 固有。
+
+**原因（2 つ、どちらも測り方）**:
+1. `compute_val_loss` が `model.eval()` で測るので projector の BatchNorm が running 統計で動く。BT は projector の出力を batch 方向に
+   標準化して相関を取る損失で、学習は batch 統計の BN を前提に次元間を無相関にしている。running 統計だと ReLU の通り方が変わって
+   その構造が崩れ、**off_diag（冗長性）の項が膨れる**。0035 の最終重み・val 64 枚の CPU プローブ: eval モードで損失 25,856（c の対角平均は
+   0.71 で on_diag は約 700。残り約 25,000 が λ·off_diag）。**bf16 は無関係**（fp32 でも 25,680）。epoch ごとの揺れは、epoch 末の
+   running 統計（直近 ~10 step の移動平均）の当たり外れ。上昇傾向は「projector が batch 統計に強く合わせ込まれるほど running 統計で
+   崩れる」で説明がつくので、**学習の良し悪しは読めない**（過学習の可能性も否定はできない）。
+2. 学習は global batch 2048 で相関を取るが、val は各 rank が同じ 256 枚を見て c を平均するだけなので実効 N=256。ランダムな相関の
+   下限 λ·D²/N が N=2048 で約 160、N=256 で約 1,300 → **BN を直しても今の N では train と比べられない**。
+   （CPU プローブの N=64 では train モードでも 10,560 で、この N の効果が支配的。GPU で N=2048 が要る。）
+
+**修正（今後の BT ランと resume から）**: `criterion.batch_statistics_loss`（BT で True）のとき `compute_val_loss` は
+(a) `batch_stat_bn`: BN を batch 統計で動かし、momentum を一時的に 0 にして running 統計を更新しない（終わったら戻す）、
+(b) `sharded_val_loader`: val のバッチを rank ごとに別にする（DistributedSampler、shuffle なし）→ c の all_reduce で学習と同じ N=2048。
+損失は全 rank 同一（c が all_reduce される）なので early stopping の整合は保てる。他手法は従来どおり eval モード・全 rank 同じバッチ。
+`tests/test_val_batch_stats.py`（running 統計が動かない・モードが戻る・BT 以外は eval モード）。
+
+**測り直し（exp 0047、debug-g・1 ノード・30 分、qsub 未）**: `scripts/analysis/bt_val_recompute.py` が 0035 の 32 本のスナップショット
+（`bt_epochs.yaml`、50 epoch ごと）を、val fold の固定バッチ 2048 枚 × 10 で「batch 統計の BN」と「eval モード」の 2 通りで測り、
+損失と on_diag / λ·off_diag を `outputs/0047_.../bt_val_recompute.jsonl` に書く。勾配なしなので 1 GPU に batch 2048 が載る見込み。
+CPU スモーク（batch 8・1 本）で最後まで通ることを確認。**これで本当の val 曲線が得られ、「上昇傾向＝過学習か」に決着がつく。**
 
 ### 📦 評価待ちの重みと andre01 へ持っていくもの（2026-10-16）
 

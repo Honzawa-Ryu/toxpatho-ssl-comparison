@@ -129,6 +129,9 @@ class BarlowTwinsLoss(torch.nn.Module):
     # loop.py が epoch 平均を取って WandB / ログに出す(train と val)。on/off は全 rank 集約後の c から計算するので全 rank 同一。
     PART_NAMES = ("on_diag", "off_diag")
     last_parts = None
+    # 損失がバッチ統計(次元ごとの標準化・相関行列)に依存する。val もこの条件で測らないと比較にならない
+    # (lib/trainer/loop.py:compute_val_loss)。
+    batch_statistics_loss = True
 
     def __init__(
         self, 

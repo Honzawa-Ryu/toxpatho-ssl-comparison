@@ -396,6 +396,13 @@ _check("損失の内訳を train と val の両方で WandB に送る", "**train
 _check("diagnose_gpu_bound は bt_probe を参照しない(未定義)",
        "bt_probe" not in loop_src[loop_src.index("def diagnose_gpu_bound"):loop_src.index("def norm_gain_mean")])
 _check("step テレメトリの epoch 要約を WandB に送る", "**step_summary," in loop_src and "ctx.train_step_summary = summarize_steps(" in loop_src)
+# BT の val(2026-10-16): batch 統計の BN・rank ごとに別の val バッチ(損失が batch 統計に依存する手法だけ)
+bt_src = open(os.path.join(REPO_ROOT, "lib/sslmodel/models/barlowtwins.py"), encoding="utf-8").read()
+_check("BT の損失は batch_statistics_loss を立てている", "batch_statistics_loss = True" in bt_src)
+_check("compute_val_loss は batch_statistics_loss のとき batch 統計の BN と rank 分割の val を使う",
+       "batch_stats = getattr(criterion, 'batch_statistics_loss', False)" in loop_src
+       and "loader = sharded_val_loader(loader)" in loop_src and "mode = batch_stat_bn(model)" in loop_src)
+_check("それ以外は従来どおり eval モード", "model.eval()\n        mode = contextlib.nullcontext()" in loop_src)
 # --step_log(2026-10-12): 全手法で step テレメトリ。BT / SimSiam は criterion の統計も
 _check("CLI --step_log が定義されている", "add_argument('--step_log'" in entry_src)
 _check("model.py は BT と SimSiam の criterion に collect_stats を設定する",

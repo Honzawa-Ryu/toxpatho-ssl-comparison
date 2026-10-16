@@ -6,6 +6,7 @@
 ガードをここに入れる（REFACTOR_PLAN.md §6-4）。
 
 """
+import contextlib
 import math
 import os
 import re
@@ -330,27 +331,73 @@ def norm_gain_mean(model):
 
 
 @torch.no_grad()
+@contextlib.contextmanager
+def batch_stat_bn(model):
+    """BatchNorm を batch 統計で動かしつつ running 統計は更新しない(momentum を一時的に 0 にする)。
+    train モードにするので、Dropout / DropPath を持つモデルでは使わないこと(BT の ViT backbone は持たない)。"""
+    was_training = model.training
+    saved = []
+    for m in model.modules():
+        if isinstance(m, torch.nn.modules.batchnorm._BatchNorm):
+            saved.append((m, m.momentum))
+            m.momentum = 0.0          # running = (1-0)·running + 0·batch → 変わらない
+    model.train()
+    try:
+        yield
+    finally:
+        for m, mom in saved:
+            m.momentum = mom
+        model.train(was_training)
+
+
+def sharded_val_loader(loader):
+    """val のバッチを rank ごとに別のものにする(学習の DistributedSampler と同じ割り方、shuffle なし)。
+    損失が rank 間で c を all_reduce する BT では、これで学習と同じ global batch(256×8=2048)の相関になる。
+    単一プロセスではそのまま返す。"""
+    if distributed.world_size() <= 1:
+        return loader
+    sampler = DistributedSampler(loader.dataset, num_replicas=distributed.world_size(), rank=distributed.rank(),
+                                 shuffle=False, drop_last=True)
+    return torch.utils.data.DataLoader(loader.dataset, batch_size=loader.batch_size, sampler=sampler,
+                                       num_workers=loader.num_workers, pin_memory=True, drop_last=True)
+
+
+@torch.no_grad()
 def compute_val_loss(ctx: RunContext, model, criterion, loader, max_batches=40):
     """Held-out pretext loss on the validation fold (fold_idx, excluded from training).
     Overfitting monitor: compare against train loss. Side-effect-safe for DINO
-    (the DINOLoss center buffer is snapshotted/restored so val data doesn't drift it)."""
+    (the DINOLoss center buffer is snapshotted/restored so val data doesn't drift it).
+
+    損失がバッチ統計に依存する手法(BT: `criterion.batch_statistics_loss`)は、学習と同じ条件で測る(2026-10-16):
+      - BatchNorm は batch 統計(eval モードの running 統計だと projector の出力が冗長になり、損失が D=8192 付近〜
+        1 万超で大きく揺れた。0035 の val_loss は全 epoch これで比較にならなかった)。running 統計は更新しない。
+      - val のバッチを rank ごとに別にして、相関を学習と同じ global batch(2048)で取る(同じ rank に同じバッチだと
+        実効 N が 256 になり、ランダムな相関の下限 λ·D²/N だけで約 1,300 残る)。c は all_reduce されるので損失は全 rank 同一。
+    それ以外の手法は従来どおり eval モード・全 rank 同じバッチ(値は rank 間で一致する)。"""
     ssl_class = ctx.ssl_class
-    was_training = model.training
-    model.eval()
+    batch_stats = getattr(criterion, 'batch_statistics_loss', False)
     saved_center = criterion.center.clone() if hasattr(criterion, 'center') else None
     losses = []
     parts_meter = LossPartsMeter(criterion)
-    for i, data in enumerate(loader):
-        parts_meter.before(criterion)
-        with torch.amp.autocast(device_type="cuda", dtype=torch.bfloat16):
-            loss = ssl_class.calc_loss(model, data, criterion)
-        parts_meter.add(criterion)
-        losses.append(loss.item())
-        if i + 1 >= max_batches:
-            break
+    if batch_stats:
+        loader = sharded_val_loader(loader)
+        mode = batch_stat_bn(model)
+    else:
+        was_training = model.training
+        model.eval()
+        mode = contextlib.nullcontext()
+    with mode:
+        for i, data in enumerate(loader):
+            parts_meter.before(criterion)
+            with torch.amp.autocast(device_type="cuda", dtype=torch.bfloat16):
+                loss = ssl_class.calc_loss(model, data, criterion)
+            parts_meter.add(criterion)
+            losses.append(loss.item())
+            if i + 1 >= max_batches:
+                break
     if saved_center is not None:
         criterion.center.copy_(saved_center)
-    if was_training:
+    if not batch_stats and was_training:
         model.train()
     ctx.val_loss_parts = parts_meter.result('val', criterion)
     return float(np.mean(losses)) if losses else float("nan")
