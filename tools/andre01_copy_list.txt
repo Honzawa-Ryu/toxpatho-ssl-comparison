@@ -1,10 +1,7 @@
-# andre01 へ持っていくファイル(2026-10-16)。rsync の --files-from に渡せる(PROJECT_ROOT からの相対パス)。
-# 4 手法の最終重み
 outputs/0028_20260917_dino_lr_half/model_ssl.pt
 outputs/0035_20261011_bt_vitb16_lrbias_quarter_clip1/model_ssl.pt
 outputs/0043_20261014_mae_vitb16_lr_half_clip1/model_ssl.pt
 outputs/0038_20261012_simsiam_vitb16_step_matched/model_ssl.pt
-# 0035_20261011_bt_vitb16_lrbias_quarter_clip1 の間引きスナップショット(32 本、scripts/analysis/bt_epochs.yaml)
 outputs/0035_20261011_bt_vitb16_lrbias_quarter_clip1/model_ep50.pt
 outputs/0035_20261011_bt_vitb16_lrbias_quarter_clip1/model_ep100.pt
 outputs/0035_20261011_bt_vitb16_lrbias_quarter_clip1/model_ep150.pt
@@ -37,7 +34,6 @@ outputs/0035_20261011_bt_vitb16_lrbias_quarter_clip1/model_ep1450.pt
 outputs/0035_20261011_bt_vitb16_lrbias_quarter_clip1/model_ep1500.pt
 outputs/0035_20261011_bt_vitb16_lrbias_quarter_clip1/model_ep1550.pt
 outputs/0035_20261011_bt_vitb16_lrbias_quarter_clip1/model_ep1600.pt
-# 0043_20261014_mae_vitb16_lr_half_clip1 の間引きスナップショット(33 本、scripts/analysis/mae_epochs.yaml)
 outputs/0043_20261014_mae_vitb16_lr_half_clip1/model_ep80.pt
 outputs/0043_20261014_mae_vitb16_lr_half_clip1/model_ep160.pt
 outputs/0043_20261014_mae_vitb16_lr_half_clip1/model_ep240.pt
@@ -71,7 +67,6 @@ outputs/0043_20261014_mae_vitb16_lr_half_clip1/model_ep2400.pt
 outputs/0043_20261014_mae_vitb16_lr_half_clip1/model_ep2480.pt
 outputs/0043_20261014_mae_vitb16_lr_half_clip1/model_ep2560.pt
 outputs/0043_20261014_mae_vitb16_lr_half_clip1/model_ep2568.pt
-# 0028_20260917_dino_lr_half の間引きスナップショット(32 本、scripts/analysis/dino_0028_epochs.yaml)
 outputs/0028_20260917_dino_lr_half/model_ep15.pt
 outputs/0028_20260917_dino_lr_half/model_ep30.pt
 outputs/0028_20260917_dino_lr_half/model_ep45.pt

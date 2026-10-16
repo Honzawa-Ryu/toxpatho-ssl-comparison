@@ -255,7 +255,8 @@ on/off は全 rank 集約後の相関行列から計算するので全 rank で�
 2. **下流（所見ラベルの AUROC）**→ 特徴抽出の入力（1.1TB のパッチ集合）が Miyabi にしか無いので、**抽出は Miyabi、スコア化は andre01**。
    重みは Miyabi に置いたままでよく、andre01 へは抽出した特徴を持っていく（`toxpatho-uni` 側）。
 
-andre01 へ持っていくファイルは **`tools/andre01_copy_list.txt`**（101 本・**70GB**、PROJECT_ROOT からの相対パス。`rsync --files-from` に渡せる）:
+andre01 へ持っていくファイルは **`tools/andre01_copy_list.txt`**（101 本・**70GB**、PROJECT_ROOT からの相対パス。`rsync --files-from` に渡せる。
+⚠️ rsync は `#` の行をコメントとして扱わずファイル名として探して失敗するので、一覧にはパスだけを書く。内訳は下のとおり）:
 - 4 手法の最終重み `model_ssl.pt`（DINO 832MB・BT 864MB・MAE 427MB・SimSiam 346MB）→ `scripts/analysis/methods_paper.yaml`（4 手法比較、更新済み。旧版は実体の無い wsi-ad のランを指していた）
 - 間引いたスナップショット（約 32 点ずつ。SimSiam 0044 と同じ点数）→ `scripts/analysis/bt_epochs.yaml`（50 epoch ごと）・`mae_epochs.yaml`（80 epoch ごと）・`dino_0028_epochs.yaml`（15 epoch ごと）
 - 全スナップショット（5 epoch ごと: BT 320 本 270GB・MAE 514 本 215GB・DINO 96 本 78GB）は Miyabi に残す。
