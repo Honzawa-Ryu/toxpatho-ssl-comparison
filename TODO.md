@@ -130,6 +130,9 @@
       `0037_20261012_mae_vitb16_step_matched`（2568 epoch = 論文本文 1600 ep の step 数、8 ノード、見積り 240〜360 ノード時間。停止をまたいだら停止明けに resume）
       `0038_20261012_simsiam_vitb16_step_matched`（160 epoch = 論文 100 ep の step 数、2 ノード、見積り 48 ノード時間）
       詳細は PROJECT_STATUS「🧩 MAE 0037 / SimSiam 0038」。旧定義 0013/0014/0016/0018（100 epoch）は使わない。
+- [ ] **BT 0035 の held-out スライドでの不変性は ep50〜100 が最良で以後悪化・頭打ち**（0047、2026-10-16）。比較に使う重みを
+      最終 epoch にするか早い epoch にするかは、andre01 の幾何（`bt_epochs.yaml`）と下流評価で決める。DINO / MAE についても
+      同じ「held-out スライドでの不変性」を測るか検討（DINO は val_loss が per-sample なので学習中の値で見られる）。
 - [ ] **比較時の注意: MAE の特徴は patch token の平均、他 3 手法は CLS token**（2026-10-12 レビュー）。
       表現比較（`lib/analysis`）と下流評価（`toxpatho-uni` の `extract_features.py`）で取り出し方を揃えるか、差として明記する。
       併せて DINO 0028 / BT 0029〜0034 は旧 lr スケジュール（減衰が warmup 分はみ出す + 1 epoch 遅れ）で走った点も記載する。
