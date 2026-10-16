@@ -353,6 +353,8 @@ def batch_stat_bn(model):
 def sharded_val_loader(loader):
     """val のバッチを rank ごとに別のものにする(学習の DistributedSampler と同じ割り方、shuffle なし)。
     損失が rank 間で c を all_reduce する BT では、これで学習と同じ global batch(256×8=2048)の相関になる。
+    行順は prepare_data が固定 seed で並べ替え済みなので、1 つの global batch に多くのスライドが混ざる
+    (並べ替え前は 3 スライド/2,048 枚で、標準化がスライド内のばらつきだけで行われ損失が比較にならなかった)。
     単一プロセスではそのまま返す。"""
     if distributed.world_size() <= 1:
         return loader

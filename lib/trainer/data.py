@@ -147,6 +147,11 @@ def prepare_data(
 
     # --- Datasets ---
     train_dataset = MemmapPatchDataset(memmap_path, patch_size, train_rows, transform=train_transform)
+    # ⚠️ memmap の行は WSI ごとに連続している(1 WSI = 連続 1,000 行)。val を行順のまま読むと、先頭 256 枚は 1 スライド、
+    # 2,048 枚でも 3 スライドしか含まない(2026-10-16 に判明。学習のバッチはシャッフルで約 860 スライド/2,048 枚)。
+    # 崩壊監視(SSLEvaluator が先頭 2,048 枚)と val_loss(BT はバッチ方向の標準化)がこの偏りを受けていたので、
+    # val の行を**固定の seed で 1 回だけ並べ替える**。epoch・rank をまたいで同じ順序(全 rank 同一の判定を保つ)。
+    val_rows = np.random.RandomState(getattr(args, 'seed', 0)).permutation(val_rows)
     eval_dataset = MemmapPatchDataset(memmap_path, patch_size, val_rows, transform=train_transform)
 
     # rank分割: WebDataset版のsplit_by_node相当。DistributedSamplerがtrain行を
