@@ -1,0 +1,167 @@
+# ============================================================
+# SimSiam 0046(SGD lr 0.05、160 epoch、2026-10-16 完走)の epoch 掃引用チェックポイント一覧(andre01 の幾何診断(0044 と同じ手順))
+# 「学習が完了しているか」= 表現が epoch とともに変わらなくなっているかを、DINO の 0027 と同じ
+# 固定 2,000 パッチで見る。model_ep5〜model_ep160 の 32 本(5 epoch ごと)。
+# Miyabi の outputs/0038_.../model_ep*.pt(計 11GB)を andre01 の同じ相対パスへコピーしてから実行する。
+# ============================================================
+
+methods:
+  - name: ep005
+    ssl_name: simsiam
+    model_name: ViTB16
+    model_path: outputs/0046_20261015_simsiam_vitb16_sgd_lr_half/model_ep5.pt
+
+  - name: ep010
+    ssl_name: simsiam
+    model_name: ViTB16
+    model_path: outputs/0046_20261015_simsiam_vitb16_sgd_lr_half/model_ep10.pt
+
+  - name: ep015
+    ssl_name: simsiam
+    model_name: ViTB16
+    model_path: outputs/0046_20261015_simsiam_vitb16_sgd_lr_half/model_ep15.pt
+
+  - name: ep020
+    ssl_name: simsiam
+    model_name: ViTB16
+    model_path: outputs/0046_20261015_simsiam_vitb16_sgd_lr_half/model_ep20.pt
+
+  - name: ep025
+    ssl_name: simsiam
+    model_name: ViTB16
+    model_path: outputs/0046_20261015_simsiam_vitb16_sgd_lr_half/model_ep25.pt
+
+  - name: ep030
+    ssl_name: simsiam
+    model_name: ViTB16
+    model_path: outputs/0046_20261015_simsiam_vitb16_sgd_lr_half/model_ep30.pt
+
+  - name: ep035
+    ssl_name: simsiam
+    model_name: ViTB16
+    model_path: outputs/0046_20261015_simsiam_vitb16_sgd_lr_half/model_ep35.pt
+
+  - name: ep040
+    ssl_name: simsiam
+    model_name: ViTB16
+    model_path: outputs/0046_20261015_simsiam_vitb16_sgd_lr_half/model_ep40.pt
+
+  - name: ep045
+    ssl_name: simsiam
+    model_name: ViTB16
+    model_path: outputs/0046_20261015_simsiam_vitb16_sgd_lr_half/model_ep45.pt
+
+  - name: ep050
+    ssl_name: simsiam
+    model_name: ViTB16
+    model_path: outputs/0046_20261015_simsiam_vitb16_sgd_lr_half/model_ep50.pt
+
+  - name: ep055
+    ssl_name: simsiam
+    model_name: ViTB16
+    model_path: outputs/0046_20261015_simsiam_vitb16_sgd_lr_half/model_ep55.pt
+
+  - name: ep060
+    ssl_name: simsiam
+    model_name: ViTB16
+    model_path: outputs/0046_20261015_simsiam_vitb16_sgd_lr_half/model_ep60.pt
+
+  - name: ep065
+    ssl_name: simsiam
+    model_name: ViTB16
+    model_path: outputs/0046_20261015_simsiam_vitb16_sgd_lr_half/model_ep65.pt
+
+  - name: ep070
+    ssl_name: simsiam
+    model_name: ViTB16
+    model_path: outputs/0046_20261015_simsiam_vitb16_sgd_lr_half/model_ep70.pt
+
+  - name: ep075
+    ssl_name: simsiam
+    model_name: ViTB16
+    model_path: outputs/0046_20261015_simsiam_vitb16_sgd_lr_half/model_ep75.pt
+
+  - name: ep080
+    ssl_name: simsiam
+    model_name: ViTB16
+    model_path: outputs/0046_20261015_simsiam_vitb16_sgd_lr_half/model_ep80.pt
+
+  - name: ep085
+    ssl_name: simsiam
+    model_name: ViTB16
+    model_path: outputs/0046_20261015_simsiam_vitb16_sgd_lr_half/model_ep85.pt
+
+  - name: ep090
+    ssl_name: simsiam
+    model_name: ViTB16
+    model_path: outputs/0046_20261015_simsiam_vitb16_sgd_lr_half/model_ep90.pt
+
+  - name: ep095
+    ssl_name: simsiam
+    model_name: ViTB16
+    model_path: outputs/0046_20261015_simsiam_vitb16_sgd_lr_half/model_ep95.pt
+
+  - name: ep100
+    ssl_name: simsiam
+    model_name: ViTB16
+    model_path: outputs/0046_20261015_simsiam_vitb16_sgd_lr_half/model_ep100.pt
+
+  - name: ep105
+    ssl_name: simsiam
+    model_name: ViTB16
+    model_path: outputs/0046_20261015_simsiam_vitb16_sgd_lr_half/model_ep105.pt
+
+  - name: ep110
+    ssl_name: simsiam
+    model_name: ViTB16
+    model_path: outputs/0046_20261015_simsiam_vitb16_sgd_lr_half/model_ep110.pt
+
+  - name: ep115
+    ssl_name: simsiam
+    model_name: ViTB16
+    model_path: outputs/0046_20261015_simsiam_vitb16_sgd_lr_half/model_ep115.pt
+
+  - name: ep120
+    ssl_name: simsiam
+    model_name: ViTB16
+    model_path: outputs/0046_20261015_simsiam_vitb16_sgd_lr_half/model_ep120.pt
+
+  - name: ep125
+    ssl_name: simsiam
+    model_name: ViTB16
+    model_path: outputs/0046_20261015_simsiam_vitb16_sgd_lr_half/model_ep125.pt
+
+  - name: ep130
+    ssl_name: simsiam
+    model_name: ViTB16
+    model_path: outputs/0046_20261015_simsiam_vitb16_sgd_lr_half/model_ep130.pt
+
+  - name: ep135
+    ssl_name: simsiam
+    model_name: ViTB16
+    model_path: outputs/0046_20261015_simsiam_vitb16_sgd_lr_half/model_ep135.pt
+
+  - name: ep140
+    ssl_name: simsiam
+    model_name: ViTB16
+    model_path: outputs/0046_20261015_simsiam_vitb16_sgd_lr_half/model_ep140.pt
+
+  - name: ep145
+    ssl_name: simsiam
+    model_name: ViTB16
+    model_path: outputs/0046_20261015_simsiam_vitb16_sgd_lr_half/model_ep145.pt
+
+  - name: ep150
+    ssl_name: simsiam
+    model_name: ViTB16
+    model_path: outputs/0046_20261015_simsiam_vitb16_sgd_lr_half/model_ep150.pt
+
+  - name: ep155
+    ssl_name: simsiam
+    model_name: ViTB16
+    model_path: outputs/0046_20261015_simsiam_vitb16_sgd_lr_half/model_ep155.pt
+
+  - name: ep160
+    ssl_name: simsiam
+    model_name: ViTB16
+    model_path: outputs/0046_20261015_simsiam_vitb16_sgd_lr_half/model_ep160.pt
