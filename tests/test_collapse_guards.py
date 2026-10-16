@@ -403,6 +403,8 @@ _check("compute_val_loss は batch_statistics_loss のとき batch 統計の BN 
        "batch_stats = getattr(criterion, 'batch_statistics_loss', False)" in loop_src
        and "loader = sharded_val_loader(loader)" in loop_src and "mode = batch_stat_bn(model)" in loop_src)
 _check("それ以外は従来どおり eval モード", "model.eval()\n        mode = contextlib.nullcontext()" in loop_src)
+_check("--simsiam_proj_hidden が model.py で hidden_dim に配線されている",
+       "add_argument('--simsiam_proj_hidden'" in entry_src and 'model_kwargs["hidden_dim"] = args.simsiam_proj_hidden' in model_src)
 # --step_log(2026-10-12): 全手法で step テレメトリ。BT / SimSiam は criterion の統計も
 _check("CLI --step_log が定義されている", "add_argument('--step_log'" in entry_src)
 _check("model.py は BT と SimSiam の criterion に collect_stats を設定する",

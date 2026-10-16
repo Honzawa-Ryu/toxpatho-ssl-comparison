@@ -142,3 +142,20 @@ class TestStepProbeDynamics(unittest.TestCase):
         self.assertEqual(len(row), len(probe.column_names))
         self.assertTrue(math.isnan(row[-1]))
         probe.close()
+
+
+class TestSimSiamProjectorWidth(unittest.TestCase):
+    """--simsiam_proj_hidden(2026-10-16): projector の隠れ層の幅。既定は backbone 次元(従来どおり)。"""
+
+    def test_hidden_dim(self):
+        from lib.sslmodel.models.simsiam import SimSiam
+        bb = torch.nn.Sequential(torch.nn.Flatten(), torch.nn.Linear(3 * 8 * 8, 768))
+        default = SimSiam(bb, head_size=768, dim=2048, pred_dim=512)
+        wide = SimSiam(bb, head_size=768, dim=2048, pred_dim=512, hidden_dim=2048)
+        self.assertEqual(default.fc[0].out_features, 768, "既定は従来どおり backbone 次元")
+        self.assertEqual(wide.fc[0].out_features, 2048)
+        self.assertEqual(wide.fc[3].in_features, 2048)
+        self.assertEqual(wide.fc[6].out_features, 2048, "出力次元は変えない")
+        p1, p2, z1, z2 = wide(torch.randn(4, 3, 8, 8), torch.randn(4, 3, 8, 8))
+        self.assertEqual(tuple(p1.shape), (4, 2048))
+        self.assertEqual(list(default.state_dict().keys()), list(wide.state_dict().keys()), "キーは同じ(形だけ違う)")

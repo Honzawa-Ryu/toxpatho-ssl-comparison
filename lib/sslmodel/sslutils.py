@@ -182,13 +182,14 @@ class SimSiam:
     def __init__(self, DEVICE="cpu"):
         self.DEVICE=DEVICE
 
-    def prepare_model(self, backbone, head_size:int=512, dim=2048, pred_dim=512,):
+    def prepare_model(self, backbone, head_size:int=512, dim=2048, pred_dim=512, hidden_dim=None):
         """return ssl model"""
         model= simsiam.SimSiam(
             backbone,
             head_size=head_size,
             dim=dim,
-            pred_dim=pred_dim,)
+            pred_dim=pred_dim,
+            hidden_dim=hidden_dim)
         criterion = simsiam.NegativeCosineSimilarity()
         model.to(self.DEVICE)
         return model, criterion

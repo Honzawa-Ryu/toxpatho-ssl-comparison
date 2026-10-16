@@ -125,6 +125,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument('--n_global_crops', type=int, default=2)       # multicrop global views
     parser.add_argument('--n_local_crops', type=int, default=0)        # multicrop local views (SwAV 6 / DINO 8); 0 = disabled
     parser.add_argument('--local_crop_size', type=int, default=96)     # multicrop local crop resolution
+    parser.add_argument('--simsiam_proj_hidden', type=int, default=0) # SimSiam: projector の隠れ層の幅(0 = backbone 次元 = ViT-B で 768。公式 ResNet-50 は 2048)
     parser.add_argument('--proj_dim', type=int, default=0)             # Barlow Twins: projector width (paper: 8192); 0 = class default
     # Barlow Twins: 勾配を world_size / この値 倍する(0 = 無効 = 従来どおり「真の勾配 / world_size」)。
     # 公式は 16 GPU。16 を渡すとノード数に依らず公式と同じ実効更新になる(lib/sslmodel/models/barlowtwins.py _GradScale)。

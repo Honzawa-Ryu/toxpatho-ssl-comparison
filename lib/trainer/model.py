@@ -214,6 +214,8 @@ def prepare_model(
     model_kwargs = {}
     if args.ssl_name == "swav":
         model_kwargs["n_prototypes"] = args.n_prototypes
+    if args.ssl_name == "simsiam" and getattr(args, "simsiam_proj_hidden", 0) > 0:
+        model_kwargs["hidden_dim"] = args.simsiam_proj_hidden
     if args.ssl_name == "barlowtwins" and args.proj_dim > 0:
         model_kwargs["projection_dim"] = args.proj_dim
         model_kwargs["pred_dim"] = args.proj_dim

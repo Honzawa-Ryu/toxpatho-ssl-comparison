@@ -14,25 +14,28 @@ class SimSiam(nn.Module):
     """
     SimSiam model.
     """
-    def __init__(self, backbone, head_size=512, dim=2048, pred_dim=512):
+    def __init__(self, backbone, head_size=512, dim=2048, pred_dim=512, hidden_dim=None):
         """
-        head_size: last layer dimension
+        head_size: last layer dimension (backbone の出力次元)
         dim: feature dimension (default: 2048)
         pred_dim: hidden dimension of the predictor (default: 512)
+        hidden_dim: projector の隠れ層の幅。None なら head_size(従来どおり。ViT-B では 768)。
+                    公式(ResNet-50)は 2048-2048-2048 で、隠れ層 = backbone 次元 = 2048。ViT-B で公式と同じ幅にするなら 2048。
         """
         super(SimSiam, self).__init__()
+        hidden_dim = hidden_dim or head_size
 
         # set the backbone encoder
         self.backbone = backbone
 
         # build a 3-layer projector
-        self.fc = nn.Sequential(nn.Linear(head_size, head_size, bias=False),
-                                nn.BatchNorm1d(head_size),
+        self.fc = nn.Sequential(nn.Linear(head_size, hidden_dim, bias=False),
+                                nn.BatchNorm1d(hidden_dim),
                                 nn.ReLU(inplace=True), # first layer
-                                nn.Linear(head_size, head_size, bias=False),
-                                nn.BatchNorm1d(head_size),
+                                nn.Linear(hidden_dim, hidden_dim, bias=False),
+                                nn.BatchNorm1d(hidden_dim),
                                 nn.ReLU(inplace=True), # second layer
-                                nn.Linear(head_size, dim),
+                                nn.Linear(hidden_dim, dim),
                                 nn.BatchNorm1d(dim, affine=False)) # output layer
         self.fc[6].bias.requires_grad = False # hack: not use bias as it is followed by BN
 
