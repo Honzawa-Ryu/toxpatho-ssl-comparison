@@ -1,53 +1,28 @@
 # ============================================================
-# 表現比較（paper 版, ViT-B/16 統一）の手法 -> チェックポイント対応表
-#
-# `lib/analysis/embeddings.py: run()` が読む methods_config。
-# 主比較は Goal.yaml 方針1により非対照学習4手法（Barlow Twins/SimSiam/MAE/DINO）
-# に限定する。SwAV（対照学習寄り）は主比較から除外するため、ここには含めない
-# （学習・チェックポイント自体は 20260714_paper_swav_vitb16 として残置、参考用途）。
-#
-# 同一手法の epoch 推移を並べる用途は別ファイル
-# `scripts/analysis/dino_epochs.yaml`（exp 0027 が使用）。この表は手法間比較専用。
-#
-# model_path はリポジトリルートからの相対パス、または絶対パス。
-# 存在しない model_path の手法は `[skip]` を出して飛ばされるので、全手法が
-# 揃う前でも回せる（= 揃っていない手法が黙って落ちる点に注意。実行後は
-# extract_summary.json の embeddings に何が入ったかを必ず確認すること。
-# なお exp 0027 の experiment.py は1つも埋め込めなければ例外で落とす）。
-#
-# ⚠️ 2026-09-04 時点で実体があるのは dino のみ。
-#   barlowtwins / mae / simsiam の3手法が指す `/workspace/andre01/honzawa/wsi-ad` は、
-#   Miyabi に無いだけでなく **andre01 側にもディレクトリごと存在しない**
-#   （2026-09-04 に andre01 で確認）。つまり「旧クラスタへ行けば取れる」ものではなく、
-#   4手法比較を成立させるには修正後の設定で再学習する必要がある（HANDOFF タスク3）。
+# 4 手法の最終比較(2026-10-16 更新)。各手法の本番ランの最終重み(model_ssl.pt)。
+# 「論文準拠」と一語で書かない: 各ランの公式からの逸脱は PROJECT_STATUS.md / 各 run_slurm.sh を参照。
+#   DINO 0028: peak lr 半減・clip 0.3(480 epoch = 論文 300 ep の step 数)
+#   BT 0035:   lr_bias 1/4・clip 1.0・修正後の損失(1600 epoch = 論文 1000 ep の step 数)
+#   MAE 0043:  peak lr 半減・clip 1.0(2568 epoch = 論文本文 1600 ep の step 数)。⚠️ 特徴は patch token の平均(他 3 手法は CLS)
+#   SimSiam 0038: SGD 公式設定(160 epoch)。⚠️ 部分的な次元崩壊(診断 0044)。0046(SGD lr 半減)が完走したら差し替えを検討
+# andre01 では Miyabi の outputs/<exp>/model_ssl.pt を同じ相対パスへコピーしてから使う(tools/andre01_copy_list.txt)。
+# 旧版(0026 ep85 と、実体の無い wsi-ad の旧ラン)は git の履歴にある。
 # ============================================================
 
 methods:
-  - name: barlowtwins
-    ssl_name: barlowtwins
-    model_name: ViTB16
-    # ⚠️ 実体なし（andre01 / Miyabi のどちらにも存在しない = [skip] される）
-    model_path: /workspace/andre01/honzawa/wsi-ad/outputs/20260714_paper_barlowtwins_vitb16/model_ssl.pt
-
-  # 0026(clip_grad 0.3) の ep85 スナップショット。train_loss 1.61 / eff_rank 318 で、
-  # 本プロジェクトで初めて崩壊していない DINO 表現（ep90 で崩壊したため ep85 が最良点）。
-  # 旧 20260714_paper_dino_vitb16/model_ssl.pt は崩壊済みランなので比較に使わない。
-  # out_dim は 65536（0024以前の 8192 とは異なる）だが、
-  # `lib/sslmodel/sslutils.py: DINO.prepare_featurize_model` がチェックポイントの
-  # 形状から復元するため、ここで指定する必要はない。
   - name: dino
     ssl_name: dino
     model_name: ViTB16
-    model_path: outputs/0026_20260901_dino_clipgrad03/model_ep85.pt
-
+    model_path: outputs/0028_20260917_dino_lr_half/model_ssl.pt
+  - name: barlowtwins
+    ssl_name: barlowtwins
+    model_name: ViTB16
+    model_path: outputs/0035_20261011_bt_vitb16_lrbias_quarter_clip1/model_ssl.pt
   - name: mae
     ssl_name: mae
     model_name: ViTB16
-    # ⚠️ 実体なし（andre01 / Miyabi のどちらにも存在しない = [skip] される）
-    model_path: /workspace/andre01/honzawa/wsi-ad/outputs/20260714_paper_mae_vitb16/model_ssl.pt
-
+    model_path: outputs/0043_20261014_mae_vitb16_lr_half_clip1/model_ssl.pt
   - name: simsiam
     ssl_name: simsiam
     model_name: ViTB16
-    # ⚠️ 実体なし（andre01 / Miyabi のどちらにも存在しない = [skip] される）
-    model_path: /workspace/andre01/honzawa/wsi-ad/outputs/20260714_paper_simsiam_vitb16/model_ssl.pt
+    model_path: outputs/0038_20261012_simsiam_vitb16_step_matched/model_ssl.pt

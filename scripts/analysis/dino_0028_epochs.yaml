@@ -1,0 +1,135 @@
+# ============================================================
+# 0028_20260917_dino_lr_half の epoch 掃引(間引き: 15 epoch ごと、32 点。SimSiam 0044 と同程度の点数)
+# 表現の幾何(隣接 epoch の CKA・η²・実効ランク・90% 成分数)の推移を andre01 で見る用(0027 / 0044 と同じ使い方)。
+# 全スナップショット(5 epoch ごと)は Miyabi にある。
+# ============================================================
+
+methods:
+  - name: ep0015
+    ssl_name: dino
+    model_name: ViTB16
+    model_path: outputs/0028_20260917_dino_lr_half/model_ep15.pt
+  - name: ep0030
+    ssl_name: dino
+    model_name: ViTB16
+    model_path: outputs/0028_20260917_dino_lr_half/model_ep30.pt
+  - name: ep0045
+    ssl_name: dino
+    model_name: ViTB16
+    model_path: outputs/0028_20260917_dino_lr_half/model_ep45.pt
+  - name: ep0060
+    ssl_name: dino
+    model_name: ViTB16
+    model_path: outputs/0028_20260917_dino_lr_half/model_ep60.pt
+  - name: ep0075
+    ssl_name: dino
+    model_name: ViTB16
+    model_path: outputs/0028_20260917_dino_lr_half/model_ep75.pt
+  - name: ep0090
+    ssl_name: dino
+    model_name: ViTB16
+    model_path: outputs/0028_20260917_dino_lr_half/model_ep90.pt
+  - name: ep0105
+    ssl_name: dino
+    model_name: ViTB16
+    model_path: outputs/0028_20260917_dino_lr_half/model_ep105.pt
+  - name: ep0120
+    ssl_name: dino
+    model_name: ViTB16
+    model_path: outputs/0028_20260917_dino_lr_half/model_ep120.pt
+  - name: ep0135
+    ssl_name: dino
+    model_name: ViTB16
+    model_path: outputs/0028_20260917_dino_lr_half/model_ep135.pt
+  - name: ep0150
+    ssl_name: dino
+    model_name: ViTB16
+    model_path: outputs/0028_20260917_dino_lr_half/model_ep150.pt
+  - name: ep0165
+    ssl_name: dino
+    model_name: ViTB16
+    model_path: outputs/0028_20260917_dino_lr_half/model_ep165.pt
+  - name: ep0180
+    ssl_name: dino
+    model_name: ViTB16
+    model_path: outputs/0028_20260917_dino_lr_half/model_ep180.pt
+  - name: ep0195
+    ssl_name: dino
+    model_name: ViTB16
+    model_path: outputs/0028_20260917_dino_lr_half/model_ep195.pt
+  - name: ep0210
+    ssl_name: dino
+    model_name: ViTB16
+    model_path: outputs/0028_20260917_dino_lr_half/model_ep210.pt
+  - name: ep0225
+    ssl_name: dino
+    model_name: ViTB16
+    model_path: outputs/0028_20260917_dino_lr_half/model_ep225.pt
+  - name: ep0240
+    ssl_name: dino
+    model_name: ViTB16
+    model_path: outputs/0028_20260917_dino_lr_half/model_ep240.pt
+  - name: ep0255
+    ssl_name: dino
+    model_name: ViTB16
+    model_path: outputs/0028_20260917_dino_lr_half/model_ep255.pt
+  - name: ep0270
+    ssl_name: dino
+    model_name: ViTB16
+    model_path: outputs/0028_20260917_dino_lr_half/model_ep270.pt
+  - name: ep0285
+    ssl_name: dino
+    model_name: ViTB16
+    model_path: outputs/0028_20260917_dino_lr_half/model_ep285.pt
+  - name: ep0300
+    ssl_name: dino
+    model_name: ViTB16
+    model_path: outputs/0028_20260917_dino_lr_half/model_ep300.pt
+  - name: ep0315
+    ssl_name: dino
+    model_name: ViTB16
+    model_path: outputs/0028_20260917_dino_lr_half/model_ep315.pt
+  - name: ep0330
+    ssl_name: dino
+    model_name: ViTB16
+    model_path: outputs/0028_20260917_dino_lr_half/model_ep330.pt
+  - name: ep0345
+    ssl_name: dino
+    model_name: ViTB16
+    model_path: outputs/0028_20260917_dino_lr_half/model_ep345.pt
+  - name: ep0360
+    ssl_name: dino
+    model_name: ViTB16
+    model_path: outputs/0028_20260917_dino_lr_half/model_ep360.pt
+  - name: ep0375
+    ssl_name: dino
+    model_name: ViTB16
+    model_path: outputs/0028_20260917_dino_lr_half/model_ep375.pt
+  - name: ep0390
+    ssl_name: dino
+    model_name: ViTB16
+    model_path: outputs/0028_20260917_dino_lr_half/model_ep390.pt
+  - name: ep0405
+    ssl_name: dino
+    model_name: ViTB16
+    model_path: outputs/0028_20260917_dino_lr_half/model_ep405.pt
+  - name: ep0420
+    ssl_name: dino
+    model_name: ViTB16
+    model_path: outputs/0028_20260917_dino_lr_half/model_ep420.pt
+  - name: ep0435
+    ssl_name: dino
+    model_name: ViTB16
+    model_path: outputs/0028_20260917_dino_lr_half/model_ep435.pt
+  - name: ep0450
+    ssl_name: dino
+    model_name: ViTB16
+    model_path: outputs/0028_20260917_dino_lr_half/model_ep450.pt
+  - name: ep0465
+    ssl_name: dino
+    model_name: ViTB16
+    model_path: outputs/0028_20260917_dino_lr_half/model_ep465.pt
+  - name: ep0480
+    ssl_name: dino
+    model_name: ViTB16
+    model_path: outputs/0028_20260917_dino_lr_half/model_ep480.pt

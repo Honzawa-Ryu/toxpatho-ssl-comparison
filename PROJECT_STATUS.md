@@ -245,6 +245,23 @@ on/off は全 rank 集約後の相関行列から計算するので全 rank で�
 併せて `upd_ratio_max` を step 前の重みのノルムで割るよう修正し、step 前がほぼ 0 のテンソル（0 初期化の bias の最初の step）を除いた
 （スモークで最大値が常に 1 に張り付いていた）。`tests/test_loss_parts.py` に要約のテスト、3 手法の CPU スモークでキーが出ることを確認。
 
+### 📦 評価待ちの重みと andre01 へ持っていくもの（2026-10-16）
+
+**学習済みで評価待ち**: DINO 0028（480 epoch。下流評価はまだ一度も回していない）・**BT 0035**・**MAE 0043**。SimSiam 0038 は部分崩壊
+（幾何の診断 0044 は済み）で、0046 の結果次第で差し替える。
+
+評価は 2 種類で、置き場所が違う:
+1. **表現の幾何**（CKA・η²・実効ランク・90% 成分数。0027 / 0044 の方式）→ **andre01**（ssl_patches の固定タイルがある）。重みを持っていく。
+2. **下流（所見ラベルの AUROC）**→ 特徴抽出の入力（1.1TB のパッチ集合）が Miyabi にしか無いので、**抽出は Miyabi、スコア化は andre01**。
+   重みは Miyabi に置いたままでよく、andre01 へは抽出した特徴を持っていく（`toxpatho-uni` 側）。
+
+andre01 へ持っていくファイルは **`tools/andre01_copy_list.txt`**（101 本・**70GB**、PROJECT_ROOT からの相対パス。`rsync --files-from` に渡せる）:
+- 4 手法の最終重み `model_ssl.pt`（DINO 832MB・BT 864MB・MAE 427MB・SimSiam 346MB）→ `scripts/analysis/methods_paper.yaml`（4 手法比較、更新済み。旧版は実体の無い wsi-ad のランを指していた）
+- 間引いたスナップショット（約 32 点ずつ。SimSiam 0044 と同じ点数）→ `scripts/analysis/bt_epochs.yaml`（50 epoch ごと）・`mae_epochs.yaml`（80 epoch ごと）・`dino_0028_epochs.yaml`（15 epoch ごと）
+- 全スナップショット（5 epoch ごと: BT 320 本 270GB・MAE 514 本 215GB・DINO 96 本 78GB）は Miyabi に残す。
+4 本の最終重みが評価用の特徴抽出器（`zoo.prepare_model_eval`）で読めて 768 次元を返すことをログインノードで確認。
+⚠️ MAE の特徴は patch token の平均、他 3 手法は CLS token（比較時に明記するか揃える）。
+
 ### 📊 2026-10-16 08:23 の状況
 
 **MAE 0043（job 3551936）: 2568/2568 で完走（10/16 04:06）**。最終 train_loss 0.267、val_loss 0.252、backbone の実効ランク 192。

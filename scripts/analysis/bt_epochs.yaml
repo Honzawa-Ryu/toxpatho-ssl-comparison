@@ -1,0 +1,135 @@
+# ============================================================
+# 0035_20261011_bt_vitb16_lrbias_quarter_clip1 の epoch 掃引(間引き: 50 epoch ごと、32 点。SimSiam 0044 と同程度の点数)
+# 表現の幾何(隣接 epoch の CKA・η²・実効ランク・90% 成分数)の推移を andre01 で見る用(0027 / 0044 と同じ使い方)。
+# 全スナップショット(5 epoch ごと)は Miyabi にある。
+# ============================================================
+
+methods:
+  - name: ep0050
+    ssl_name: barlowtwins
+    model_name: ViTB16
+    model_path: outputs/0035_20261011_bt_vitb16_lrbias_quarter_clip1/model_ep50.pt
+  - name: ep0100
+    ssl_name: barlowtwins
+    model_name: ViTB16
+    model_path: outputs/0035_20261011_bt_vitb16_lrbias_quarter_clip1/model_ep100.pt
+  - name: ep0150
+    ssl_name: barlowtwins
+    model_name: ViTB16
+    model_path: outputs/0035_20261011_bt_vitb16_lrbias_quarter_clip1/model_ep150.pt
+  - name: ep0200
+    ssl_name: barlowtwins
+    model_name: ViTB16
+    model_path: outputs/0035_20261011_bt_vitb16_lrbias_quarter_clip1/model_ep200.pt
+  - name: ep0250
+    ssl_name: barlowtwins
+    model_name: ViTB16
+    model_path: outputs/0035_20261011_bt_vitb16_lrbias_quarter_clip1/model_ep250.pt
+  - name: ep0300
+    ssl_name: barlowtwins
+    model_name: ViTB16
+    model_path: outputs/0035_20261011_bt_vitb16_lrbias_quarter_clip1/model_ep300.pt
+  - name: ep0350
+    ssl_name: barlowtwins
+    model_name: ViTB16
+    model_path: outputs/0035_20261011_bt_vitb16_lrbias_quarter_clip1/model_ep350.pt
+  - name: ep0400
+    ssl_name: barlowtwins
+    model_name: ViTB16
+    model_path: outputs/0035_20261011_bt_vitb16_lrbias_quarter_clip1/model_ep400.pt
+  - name: ep0450
+    ssl_name: barlowtwins
+    model_name: ViTB16
+    model_path: outputs/0035_20261011_bt_vitb16_lrbias_quarter_clip1/model_ep450.pt
+  - name: ep0500
+    ssl_name: barlowtwins
+    model_name: ViTB16
+    model_path: outputs/0035_20261011_bt_vitb16_lrbias_quarter_clip1/model_ep500.pt
+  - name: ep0550
+    ssl_name: barlowtwins
+    model_name: ViTB16
+    model_path: outputs/0035_20261011_bt_vitb16_lrbias_quarter_clip1/model_ep550.pt
+  - name: ep0600
+    ssl_name: barlowtwins
+    model_name: ViTB16
+    model_path: outputs/0035_20261011_bt_vitb16_lrbias_quarter_clip1/model_ep600.pt
+  - name: ep0650
+    ssl_name: barlowtwins
+    model_name: ViTB16
+    model_path: outputs/0035_20261011_bt_vitb16_lrbias_quarter_clip1/model_ep650.pt
+  - name: ep0700
+    ssl_name: barlowtwins
+    model_name: ViTB16
+    model_path: outputs/0035_20261011_bt_vitb16_lrbias_quarter_clip1/model_ep700.pt
+  - name: ep0750
+    ssl_name: barlowtwins
+    model_name: ViTB16
+    model_path: outputs/0035_20261011_bt_vitb16_lrbias_quarter_clip1/model_ep750.pt
+  - name: ep0800
+    ssl_name: barlowtwins
+    model_name: ViTB16
+    model_path: outputs/0035_20261011_bt_vitb16_lrbias_quarter_clip1/model_ep800.pt
+  - name: ep0850
+    ssl_name: barlowtwins
+    model_name: ViTB16
+    model_path: outputs/0035_20261011_bt_vitb16_lrbias_quarter_clip1/model_ep850.pt
+  - name: ep0900
+    ssl_name: barlowtwins
+    model_name: ViTB16
+    model_path: outputs/0035_20261011_bt_vitb16_lrbias_quarter_clip1/model_ep900.pt
+  - name: ep0950
+    ssl_name: barlowtwins
+    model_name: ViTB16
+    model_path: outputs/0035_20261011_bt_vitb16_lrbias_quarter_clip1/model_ep950.pt
+  - name: ep1000
+    ssl_name: barlowtwins
+    model_name: ViTB16
+    model_path: outputs/0035_20261011_bt_vitb16_lrbias_quarter_clip1/model_ep1000.pt
+  - name: ep1050
+    ssl_name: barlowtwins
+    model_name: ViTB16
+    model_path: outputs/0035_20261011_bt_vitb16_lrbias_quarter_clip1/model_ep1050.pt
+  - name: ep1100
+    ssl_name: barlowtwins
+    model_name: ViTB16
+    model_path: outputs/0035_20261011_bt_vitb16_lrbias_quarter_clip1/model_ep1100.pt
+  - name: ep1150
+    ssl_name: barlowtwins
+    model_name: ViTB16
+    model_path: outputs/0035_20261011_bt_vitb16_lrbias_quarter_clip1/model_ep1150.pt
+  - name: ep1200
+    ssl_name: barlowtwins
+    model_name: ViTB16
+    model_path: outputs/0035_20261011_bt_vitb16_lrbias_quarter_clip1/model_ep1200.pt
+  - name: ep1250
+    ssl_name: barlowtwins
+    model_name: ViTB16
+    model_path: outputs/0035_20261011_bt_vitb16_lrbias_quarter_clip1/model_ep1250.pt
+  - name: ep1300
+    ssl_name: barlowtwins
+    model_name: ViTB16
+    model_path: outputs/0035_20261011_bt_vitb16_lrbias_quarter_clip1/model_ep1300.pt
+  - name: ep1350
+    ssl_name: barlowtwins
+    model_name: ViTB16
+    model_path: outputs/0035_20261011_bt_vitb16_lrbias_quarter_clip1/model_ep1350.pt
+  - name: ep1400
+    ssl_name: barlowtwins
+    model_name: ViTB16
+    model_path: outputs/0035_20261011_bt_vitb16_lrbias_quarter_clip1/model_ep1400.pt
+  - name: ep1450
+    ssl_name: barlowtwins
+    model_name: ViTB16
+    model_path: outputs/0035_20261011_bt_vitb16_lrbias_quarter_clip1/model_ep1450.pt
+  - name: ep1500
+    ssl_name: barlowtwins
+    model_name: ViTB16
+    model_path: outputs/0035_20261011_bt_vitb16_lrbias_quarter_clip1/model_ep1500.pt
+  - name: ep1550
+    ssl_name: barlowtwins
+    model_name: ViTB16
+    model_path: outputs/0035_20261011_bt_vitb16_lrbias_quarter_clip1/model_ep1550.pt
+  - name: ep1600
+    ssl_name: barlowtwins
+    model_name: ViTB16
+    model_path: outputs/0035_20261011_bt_vitb16_lrbias_quarter_clip1/model_ep1600.pt

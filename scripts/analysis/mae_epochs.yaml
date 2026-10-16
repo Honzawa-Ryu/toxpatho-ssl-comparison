@@ -1,0 +1,139 @@
+# ============================================================
+# 0043_20261014_mae_vitb16_lr_half_clip1 の epoch 掃引(間引き: 80 epoch ごと、33 点。SimSiam 0044 と同程度の点数)
+# 表現の幾何(隣接 epoch の CKA・η²・実効ランク・90% 成分数)の推移を andre01 で見る用(0027 / 0044 と同じ使い方)。
+# 全スナップショット(5 epoch ごと)は Miyabi にある。
+# ============================================================
+
+methods:
+  - name: ep0080
+    ssl_name: mae
+    model_name: ViTB16
+    model_path: outputs/0043_20261014_mae_vitb16_lr_half_clip1/model_ep80.pt
+  - name: ep0160
+    ssl_name: mae
+    model_name: ViTB16
+    model_path: outputs/0043_20261014_mae_vitb16_lr_half_clip1/model_ep160.pt
+  - name: ep0240
+    ssl_name: mae
+    model_name: ViTB16
+    model_path: outputs/0043_20261014_mae_vitb16_lr_half_clip1/model_ep240.pt
+  - name: ep0320
+    ssl_name: mae
+    model_name: ViTB16
+    model_path: outputs/0043_20261014_mae_vitb16_lr_half_clip1/model_ep320.pt
+  - name: ep0400
+    ssl_name: mae
+    model_name: ViTB16
+    model_path: outputs/0043_20261014_mae_vitb16_lr_half_clip1/model_ep400.pt
+  - name: ep0480
+    ssl_name: mae
+    model_name: ViTB16
+    model_path: outputs/0043_20261014_mae_vitb16_lr_half_clip1/model_ep480.pt
+  - name: ep0560
+    ssl_name: mae
+    model_name: ViTB16
+    model_path: outputs/0043_20261014_mae_vitb16_lr_half_clip1/model_ep560.pt
+  - name: ep0640
+    ssl_name: mae
+    model_name: ViTB16
+    model_path: outputs/0043_20261014_mae_vitb16_lr_half_clip1/model_ep640.pt
+  - name: ep0720
+    ssl_name: mae
+    model_name: ViTB16
+    model_path: outputs/0043_20261014_mae_vitb16_lr_half_clip1/model_ep720.pt
+  - name: ep0800
+    ssl_name: mae
+    model_name: ViTB16
+    model_path: outputs/0043_20261014_mae_vitb16_lr_half_clip1/model_ep800.pt
+  - name: ep0880
+    ssl_name: mae
+    model_name: ViTB16
+    model_path: outputs/0043_20261014_mae_vitb16_lr_half_clip1/model_ep880.pt
+  - name: ep0960
+    ssl_name: mae
+    model_name: ViTB16
+    model_path: outputs/0043_20261014_mae_vitb16_lr_half_clip1/model_ep960.pt
+  - name: ep1040
+    ssl_name: mae
+    model_name: ViTB16
+    model_path: outputs/0043_20261014_mae_vitb16_lr_half_clip1/model_ep1040.pt
+  - name: ep1120
+    ssl_name: mae
+    model_name: ViTB16
+    model_path: outputs/0043_20261014_mae_vitb16_lr_half_clip1/model_ep1120.pt
+  - name: ep1200
+    ssl_name: mae
+    model_name: ViTB16
+    model_path: outputs/0043_20261014_mae_vitb16_lr_half_clip1/model_ep1200.pt
+  - name: ep1280
+    ssl_name: mae
+    model_name: ViTB16
+    model_path: outputs/0043_20261014_mae_vitb16_lr_half_clip1/model_ep1280.pt
+  - name: ep1360
+    ssl_name: mae
+    model_name: ViTB16
+    model_path: outputs/0043_20261014_mae_vitb16_lr_half_clip1/model_ep1360.pt
+  - name: ep1440
+    ssl_name: mae
+    model_name: ViTB16
+    model_path: outputs/0043_20261014_mae_vitb16_lr_half_clip1/model_ep1440.pt
+  - name: ep1520
+    ssl_name: mae
+    model_name: ViTB16
+    model_path: outputs/0043_20261014_mae_vitb16_lr_half_clip1/model_ep1520.pt
+  - name: ep1600
+    ssl_name: mae
+    model_name: ViTB16
+    model_path: outputs/0043_20261014_mae_vitb16_lr_half_clip1/model_ep1600.pt
+  - name: ep1680
+    ssl_name: mae
+    model_name: ViTB16
+    model_path: outputs/0043_20261014_mae_vitb16_lr_half_clip1/model_ep1680.pt
+  - name: ep1760
+    ssl_name: mae
+    model_name: ViTB16
+    model_path: outputs/0043_20261014_mae_vitb16_lr_half_clip1/model_ep1760.pt
+  - name: ep1840
+    ssl_name: mae
+    model_name: ViTB16
+    model_path: outputs/0043_20261014_mae_vitb16_lr_half_clip1/model_ep1840.pt
+  - name: ep1920
+    ssl_name: mae
+    model_name: ViTB16
+    model_path: outputs/0043_20261014_mae_vitb16_lr_half_clip1/model_ep1920.pt
+  - name: ep2000
+    ssl_name: mae
+    model_name: ViTB16
+    model_path: outputs/0043_20261014_mae_vitb16_lr_half_clip1/model_ep2000.pt
+  - name: ep2080
+    ssl_name: mae
+    model_name: ViTB16
+    model_path: outputs/0043_20261014_mae_vitb16_lr_half_clip1/model_ep2080.pt
+  - name: ep2160
+    ssl_name: mae
+    model_name: ViTB16
+    model_path: outputs/0043_20261014_mae_vitb16_lr_half_clip1/model_ep2160.pt
+  - name: ep2240
+    ssl_name: mae
+    model_name: ViTB16
+    model_path: outputs/0043_20261014_mae_vitb16_lr_half_clip1/model_ep2240.pt
+  - name: ep2320
+    ssl_name: mae
+    model_name: ViTB16
+    model_path: outputs/0043_20261014_mae_vitb16_lr_half_clip1/model_ep2320.pt
+  - name: ep2400
+    ssl_name: mae
+    model_name: ViTB16
+    model_path: outputs/0043_20261014_mae_vitb16_lr_half_clip1/model_ep2400.pt
+  - name: ep2480
+    ssl_name: mae
+    model_name: ViTB16
+    model_path: outputs/0043_20261014_mae_vitb16_lr_half_clip1/model_ep2480.pt
+  - name: ep2560
+    ssl_name: mae
+    model_name: ViTB16
+    model_path: outputs/0043_20261014_mae_vitb16_lr_half_clip1/model_ep2560.pt
+  - name: ep2568
+    ssl_name: mae
+    model_name: ViTB16
+    model_path: outputs/0043_20261014_mae_vitb16_lr_half_clip1/model_ep2568.pt
