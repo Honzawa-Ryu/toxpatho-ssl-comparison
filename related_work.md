@@ -61,3 +61,26 @@ WebSearch/WebFetch で精査した先行研究を「条件 / 比較対象 / 手�
 **「一般画像との比較は要るか」:**
 - 新規性のためには**不要**（①を引用すれば足りる。バッチはImageNetに無い病理固有の軸）。
 - 位置づけとして「**自然画像の CL/MIM 二分法が、バッチ交絡のある病理でどう崩れる/保たれるか**」と framing すると強い。査読対策の"強化材料"として軽い自然画像コントロールは有効だが必須ではない。
+
+---
+
+## ⑤ SimSiam × ViT の先行（2026-10-17 調査。本プロジェクトの SimSiam 部分崩壊の位置づけ）
+
+**結論: 病理（H&E / WSI）で SimSiam を ViT backbone で回した報告は見つからなかった。** 病理で SimSiam を使った報告はすべて CNN
+（ResNet-18/50 など）。自然画像では「SimSiam × ViT は壊れやすい」という直接の報告がある。
+
+| 文献 | 内容 | 本件との関係 |
+|---|---|---|
+| Li et al., "Understanding Collapse in Non-Contrastive Siamese Representation Learning" (ECCV 2022, arXiv 2209.15007) | SimSiam は**モデルがデータに対して小さいと部分的な次元崩壊**を起こす（ResNet-18/34 で ImageNet の 5〜10% が最良、それ以上のデータで k-NN が落ちる）。崩壊は PCA の特異値（累積寄与の AUC）で測り、per-dim std では見逃す。MoCo v3・BYOL（EMA）は崩壊しない。**ViT-S を MoCo v3 のハイパラで SimSiam 学習すると線形プローブ 6〜10%**、「SimSiam はハイパラに非常に敏感」「ViT は非対照手法に要る帰納バイアスを欠くかもしれない」と注記。対策は continual training（1 パス）、幅を広げる、蒸留 | 本件の診断（90% 成分数 4〜7、per-dim std では検出できず）と同じ測り方・同じ現象。**SimSiam × ViT の失敗は先行でも報告済み** |
+| Chen, Xie, He, MoCo v3 (ICCV 2021, arXiv 2104.02057) | ViT の SSL 比較は MoCo v3 / SimCLR / BYOL / SwAV のみで、**SimSiam の ViT 結果は載せていない**。ViT の不安定性は patch projection の勾配スパイクから始まり、patch projection を固定（random projection）すると緩和するが解決はしない | 本件の BT / MAE の発散（初期 block から）と整合。SimSiam を ViT で回す公式レシピは存在しない |
+| Kang et al., "Benchmarking SSL on Diverse Pathology Datasets" (CVPR 2023, arXiv 2212.04690) | 病理 SSL の大規模ベンチマーク。MoCo v2 / SwAV / Barlow Twins（ResNet-50）+ DINO（ViT-S）。**SimSiam は含まない**。SimSiam の病理利用は画像検索の先行を引用 | 病理で非対照 4 手法を ViT で揃えた比較は無い（本件の新規性） |
+| Schäfer et al.?, "Investigation of semi- and self-supervised learning methods in the histopathological domain" (PMC10070179) | Kather / PCam で PAWS / SimCLR / SimSiam を **ResNet-18 / WRN / ResNet-50** で比較。SimSiam は finetune 後の性能は最良だが「最も学習が難しい」「ASHA では学習が壊れる」 | 病理 + CNN では SimSiam は動くが扱いにくい |
+| Dual-branch SSL for tumour segmentation in WSI (arXiv 2303.11019) | SimSiam を **ResNet-18** で WSI に適用 | CNN |
+| CluSiam (arXiv 2310.12334) | 病理で SimSiam 型にクラスタ制約を足す。stop-gradient が崩壊防止に必須、クラスタ割当の崩壊を観測 | 病理での SimSiam 系の崩壊しやすさ |
+| "Contrastive Learning Meets Transfer Learning" (arXiv 2103.03166) | BiT に SimSiam を載せると GroupNorm で崩壊、BN が必須 | 正規化層への依存 |
+| Chen & Krishnan, "Self-Supervised ViTs Learn Visual Concepts in Histopathology" (arXiv 2203.00585) | 病理の ViT SSL は DINO | ViT + 病理の標準は DINO / iBOT 系 |
+
+**本件への含意**: SimSiam × ViT-B の部分崩壊（lr 0.1 / 0.05 / 0.025・SGD / AdamW・projector 768 / 2048 のいずれでも）は、
+Li et al. の「ViT で 6〜10%」「ハイパラに敏感」「ViT は帰納バイアスを欠く可能性」と整合し、本件固有の実装ミスである可能性は低い。
+病理 ViT で SimSiam を公式に動かした先行が無いので、「本データ × ViT-B では部分崩壊する」こと自体を診断値つきで報告する。
+Li et al. の測り方（特異値の累積寄与）は本件の n_comp_90 / pc1_ratio と同型なので、報告時はそれに揃える。
